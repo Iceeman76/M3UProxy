@@ -339,15 +339,16 @@ ASALocalRun/
 # BeatPulse healthcheck temp database
 healthchecksdb
 
-# Secrets and local configuration (new/untracked files only)
+# Secrets and local configuration
 .env
 .env.*
 !.env.example
 !.env.sample
 *.env
 *.env.*
-!.env.example
-!.env.sample
+!*.env.example
+!*.env.sample
+.secrets/
 **/secrets.json
 **/secrets.*.json
 **/appsettings.local.json
@@ -360,9 +361,15 @@ healthchecksdb
 *.p8
 *.jks
 *.keystore
+*.ppk
+*.kdbx
 *.snk
 id_rsa
 id_rsa.*
 id_ed25519
 id_ed25519.*
+id_ecdsa
+id_ecdsa.*
+id_dsa
+id_dsa.*
 *.asc
