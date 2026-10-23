@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="M3UProxy/M3UProxy.csproj" />
+  <Project Path="M3UProxy.Tests/M3UProxy.Tests.csproj" />
+  <Project Path="M3UProxyApp/M3UProxyApp.csproj" />
+</Solution>
