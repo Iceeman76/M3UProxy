@@ -1,6 +1,6 @@
-using M3UProxyApp;
+using DotNetLab.M3UProxyApp;
 
-namespace M3UProxy.Tests;
+namespace DotNetLab.M3UProxy.Tests;
 
 internal static class ProxyTestFactory
 {

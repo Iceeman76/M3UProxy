@@ -1,5 +1,5 @@
+using DotNetLab.M3UProxyApp;
 using Microsoft.Extensions.Configuration;
-using M3UProxyApp;
 using Spectre.Console;
 
 IConfigurationRoot configuration;

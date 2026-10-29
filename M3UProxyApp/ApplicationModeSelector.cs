@@ -1,6 +1,6 @@
 using Spectre.Console;
 
-namespace M3UProxyApp;
+namespace DotNetLab.M3UProxyApp;
 
 internal static class ApplicationModeSelector
 {

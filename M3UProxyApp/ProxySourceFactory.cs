@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.WebUtilities;
 
-namespace M3UProxyApp;
+namespace DotNetLab.M3UProxyApp;
 
 internal static class ProxySourceFactory
 {

@@ -1,9 +1,9 @@
 using System.Diagnostics;
-using M3UProxy;
+using DotNetLab.M3UProxy;
 using Microsoft.Extensions.Configuration;
 using Spectre.Console;
 
-namespace M3UProxyApp;
+namespace DotNetLab.M3UProxyApp;
 
 internal static class DownloadMode
 {

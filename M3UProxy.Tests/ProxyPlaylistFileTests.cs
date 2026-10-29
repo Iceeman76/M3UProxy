@@ -1,9 +1,9 @@
 using System.Text;
-using M3UProxyApp;
+using DotNetLab.M3UProxyApp;
 using Microsoft.AspNetCore.Http;
 using NUnit.Framework;
 
-namespace M3UProxy.Tests;
+namespace DotNetLab.M3UProxy.Tests;
 
 public sealed class ProxyPlaylistFileTests
 {

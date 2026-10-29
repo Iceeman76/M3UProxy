@@ -1,8 +1,8 @@
 using System.Text;
-using M3UProxy;
+using DotNetLab.M3UProxy;
 using Microsoft.AspNetCore.Http;
 
-namespace M3UProxyApp;
+namespace DotNetLab.M3UProxyApp;
 
 internal static class LocalContentResponseWriter
 {

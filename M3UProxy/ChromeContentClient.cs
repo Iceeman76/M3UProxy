@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Microsoft.Playwright;
 
-namespace M3UProxy;
+namespace DotNetLab.M3UProxy;
 
 public sealed class ChromeContentClient : IAsyncDisposable
 {

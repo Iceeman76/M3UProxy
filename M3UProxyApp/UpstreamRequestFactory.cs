@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Http;
 
-namespace M3UProxyApp;
+namespace DotNetLab.M3UProxyApp;
 
 internal static class UpstreamRequestFactory
 {

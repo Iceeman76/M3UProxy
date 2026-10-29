@@ -2,7 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Playwright;
 
-namespace M3UProxy;
+namespace DotNetLab.M3UProxy;
 
 public sealed class ChromeContentResponse(IBrowserContext context, ICDPSession cdpSession, string streamHandle, int statusCode, IReadOnlyDictionary<string, string> headers) : IAsyncDisposable
 {

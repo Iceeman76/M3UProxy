@@ -1,6 +1,6 @@
 using NUnit.Framework;
 
-namespace M3UProxy.Tests;
+namespace DotNetLab.M3UProxy.Tests;
 
 public sealed class M3UContentRewriterTests
 {

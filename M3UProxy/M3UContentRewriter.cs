@@ -1,4 +1,4 @@
-namespace M3UProxy;
+namespace DotNetLab.M3UProxy;
 
 public static class M3UContentRewriter
 {
