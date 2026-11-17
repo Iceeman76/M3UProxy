@@ -4,6 +4,7 @@ using DotNetLab.M3UProxyApp;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using NUnit.Framework;
+using Spectre.Console;
 
 namespace DotNetLab.M3UProxy.Tests;
 
@@ -115,9 +116,10 @@ public sealed class FileLoggingTests
     [NonParallelizable]
     public void Factory_FiltersConsoleAndFileIndependently()
     {
-        var originalOutput = Console.Out;
+        var originalConsole = AnsiConsole.Console;
         using var output = new StringWriter();
-        Console.SetOut(output);
+        AnsiConsole.Console = AnsiConsole.Create(new AnsiConsoleSettings { Out = new AnsiConsoleOutput(output), Ansi = AnsiSupport.No });
+        AnsiConsole.Console.Profile.Width = 240;
 
         try
         {
@@ -141,7 +143,57 @@ public sealed class FileLoggingTests
         }
         finally
         {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Test]
+    [NonParallelizable]
+    public async Task ConsoleLogging_UsesProgressRendererForConcurrentMessages()
+    {
+        var originalConsole = AnsiConsole.Console;
+        var originalOutput = Console.Out;
+        using var renderedOutput = new StringWriter();
+        using var directOutput = new StringWriter();
+        var console = AnsiConsole.Create(new AnsiConsoleSettings { Out = new AnsiConsoleOutput(renderedOutput), Ansi = AnsiSupport.Yes, Interactive = InteractionSupport.Yes });
+        console.Profile.Width = 240;
+        console.Profile.Height = 40;
+        AnsiConsole.Console = console;
+        Console.SetOut(directOutput);
+
+        try
+        {
+            var configuration = CreateConfiguration(new Dictionary<string, string?> { ["Logging:Console:Enabled"] = "true" });
+
+            using (var factory = ApplicationLogging.Create(configuration))
+            {
+                var logger = factory.CreateLogger("Downloads");
+                await console.Progress().AutoRefresh(false).Columns(new TaskDescriptionColumn(), new ProgressBarColumn()).StartAsync(async context =>
+                {
+                    var task = context.AddTask("Playlist update");
+                    context.Refresh();
+                    await Task.WhenAll(Enumerable.Range(0, 8).Select(index => Task.Run(() => logger.LogInformation("Download {Index} [completed]", index))));
+                    task.Value = 100;
+                    context.Refresh();
+                });
+            }
+
+            Assert.That(directOutput.ToString(), Is.Empty);
+            Assert.That(renderedOutput.ToString(), Does.Contain("Playlist update"));
+            var fileEntries = await File.ReadAllLinesAsync(logPath);
+            Assert.That(fileEntries, Has.Length.EqualTo(8));
+
+            for (var index = 0; index < 8; index++)
+            {
+                var message = $"Download {index} [completed]";
+                Assert.That(renderedOutput.ToString().Split(message), Has.Length.EqualTo(2));
+                Assert.That(fileEntries.Count(entry => entry.Contains(message, StringComparison.Ordinal)), Is.EqualTo(1));
+            }
+        }
+        finally
+        {
             Console.SetOut(originalOutput);
+            AnsiConsole.Console = originalConsole;
         }
     }
 
