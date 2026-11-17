@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Http;
 
 namespace DotNetLab.M3UProxyApp;
 
-internal static class LocalContentResponseWriter
+public static class LocalContentResponseWriter
 {
     public static async Task WritePlaylistAsync(HttpContext context, ProxySource source, Uri publicBaseUri)
     {

@@ -12,18 +12,19 @@ internal static class DownloadMode
     public static async Task<int> RunAsync(IConfiguration configuration, CancellationToken cancellationToken, ILoggerFactory loggerFactory)
     {
         var jobs = configuration.GetSection("Downloads").Get<List<DownloadJob>>() ?? [];
+        var browserOptions = configuration.GetSection("Browser").Get<BrowserOptions>() ?? new BrowserOptions();
 
-        return await RunAsync(jobs, cancellationToken, loggerFactory);
+        return await RunAsync(jobs, cancellationToken, loggerFactory, browserOptions);
     }
 
-    public static async Task<int> RunAsync(IReadOnlyCollection<DownloadJob> jobs, CancellationToken cancellationToken, ILoggerFactory? loggerFactory = null)
+    public static async Task<int> RunAsync(IReadOnlyCollection<DownloadJob> jobs, CancellationToken cancellationToken, ILoggerFactory? loggerFactory = null, BrowserOptions? browserOptions = null)
     {
         var logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger("DotNetLab.M3UProxyApp.Download");
         Validate(jobs);
         logger.LogInformation("Download refresh starting jobs={JobCount}", jobs.Count);
         AnsiConsole.MarkupLine($"Starting [cyan]{jobs.Count}[/] parallel download(s). Press [grey]Ctrl+C[/] to cancel.\n");
         var totalStopwatch = Stopwatch.StartNew();
-        var results = await RunDownloadsAsync(jobs, cancellationToken, logger);
+        var results = await RunDownloadsAsync(jobs, cancellationToken, logger, browserOptions);
         totalStopwatch.Stop();
         var succeeded = results.Count(result => result.Success);
         var failed = results.Length - succeeded;
@@ -33,13 +34,13 @@ internal static class DownloadMode
         return failed is 0 ? 0 : 1;
     }
 
-    private static async Task<DownloadResult[]> RunDownloadsAsync(IEnumerable<DownloadJob> jobs, CancellationToken cancellationToken, ILogger logger)
+    private static async Task<DownloadResult[]> RunDownloadsAsync(IEnumerable<DownloadJob> jobs, CancellationToken cancellationToken, ILogger logger, BrowserOptions? browserOptions)
     {
         var results = Array.Empty<DownloadResult>();
         var progress = AnsiConsole.Progress().AutoClear(false).HideCompleted(false).Columns(new SpinnerColumn(), new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new DownloadedColumn(), new TransferSpeedColumn(), new RemainingTimeColumn());
         await progress.StartAsync(async context =>
         {
-            var tasks = jobs.Select(job => RunDownloadAsync(job, CreateProgressTask(context, job), cancellationToken, logger));
+            var tasks = jobs.Select(job => RunDownloadAsync(job, CreateProgressTask(context, job), cancellationToken, logger, browserOptions));
             results = await Task.WhenAll(tasks);
         });
 
@@ -88,7 +89,7 @@ internal static class DownloadMode
         }
     }
 
-    private static async Task<DownloadResult> RunDownloadAsync(DownloadJob job, ProgressTask progressTask, CancellationToken cancellationToken, ILogger logger)
+    private static async Task<DownloadResult> RunDownloadAsync(DownloadJob job, ProgressTask progressTask, CancellationToken cancellationToken, ILogger logger, BrowserOptions? browserOptions)
     {
         var stopwatch = Stopwatch.StartNew();
         var progress = new InlineProgress<DownloadProgress>(value =>
@@ -104,7 +105,7 @@ internal static class DownloadMode
 
         try
         {
-            var downloader = new WebContentDownloader();
+            var downloader = new WebContentDownloader(browserOptions, logger);
             await downloader.DownloadAsync(job.Url, job.FilePath, cancellationToken, progress);
             stopwatch.Stop();
             var bytes = new FileInfo(job.FilePath).Length;

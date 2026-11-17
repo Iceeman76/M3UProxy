@@ -1,6 +1,6 @@
 namespace DotNetLab.M3UProxyApp;
 
-internal sealed record FileLogOptions
+public sealed record FileLogOptions
 {
     public bool Enabled { get; init; }
     public string Path { get; init; } = "logs/m3uproxy.log";
@@ -8,14 +8,14 @@ internal sealed record FileLogOptions
     public int RetainedFileCount { get; init; } = 7;
 }
 
-internal sealed record DownloadJob
+public sealed record DownloadJob
 {
     public string Name { get; init; } = string.Empty;
     public string Url { get; init; } = string.Empty;
     public string FilePath { get; init; } = string.Empty;
 }
 
-internal sealed record ProxyOptions
+public sealed record ProxyOptions
 {
     public string ListenUrl { get; init; } = "http://127.0.0.1:5050";
     public string PublicBaseUrl { get; init; } = "http://127.0.0.1:5050";
@@ -24,11 +24,11 @@ internal sealed record ProxyOptions
     public List<ProxySourceOptions> Sources { get; init; } = [];
 }
 
-internal sealed record ProxySourceOptions
+public sealed record ProxySourceOptions
 {
     public string Name { get; init; } = string.Empty;
     public string PlaylistDownload { get; init; } = string.Empty;
     public string? EpgDownload { get; init; }
 }
 
-internal sealed record ProxySource(string Name, DownloadJob Playlist, DownloadJob? Epg, Uri UpstreamBaseUri, string Username, string Password);
+public sealed record ProxySource(string Name, DownloadJob Playlist, DownloadJob? Epg, Uri UpstreamBaseUri, string Username, string Password);

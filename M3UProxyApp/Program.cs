@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using DotNetLab.M3UProxy;
 using DotNetLab.M3UProxyApp;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -50,6 +51,9 @@ try
 {
     var mode = ApplicationModeSelector.Select(args);
     logger.LogInformation("Application starting in {Mode} mode", mode);
+    var browserOptions = configuration.GetSection("Browser").Get<BrowserOptions>() ?? new BrowserOptions();
+    var usesExecutablePath = string.IsNullOrWhiteSpace(browserOptions.ExecutablePath) is false;
+    logger.LogInformation("Browser configured channel={Channel} executable_path={ExecutablePath} selection={Selection}", browserOptions.Channel.Trim().ToLowerInvariant(), usesExecutablePath ? browserOptions.ExecutablePath : "automatic", usesExecutablePath ? "executable_path" : "channel");
 
     return mode switch
     {

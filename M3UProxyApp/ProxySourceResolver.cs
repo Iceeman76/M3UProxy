@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Http;
 
 namespace DotNetLab.M3UProxyApp;
 
-internal static class ProxySourceResolver
+public static class ProxySourceResolver
 {
     public static ProxySource? Resolve(HttpRequest request, IReadOnlyList<ProxySource> sources)
     {

@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 
 namespace DotNetLab.M3UProxyApp;
 
-internal static class ApplicationLogging
+public static class ApplicationLogging
 {
     public static ILoggerFactory Create(IConfiguration configuration)
     {

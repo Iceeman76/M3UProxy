@@ -1,6 +1,6 @@
 namespace DotNetLab.M3UProxyApp;
 
-internal static class ProxyKeyMonitor
+public static class ProxyKeyMonitor
 {
     public static async Task<ProxyCommand> WaitAsync(CancellationToken cancellationToken)
     {
@@ -17,7 +17,7 @@ internal static class ProxyKeyMonitor
         }
     }
 
-    internal static ProxyCommand? GetCommand(ConsoleKeyInfo key) => key.Key switch
+    public static ProxyCommand? GetCommand(ConsoleKeyInfo key) => key.Key switch
     {
         ConsoleKey.Q => ProxyCommand.Quit,
         ConsoleKey.U => ProxyCommand.Update,
@@ -25,7 +25,7 @@ internal static class ProxyKeyMonitor
     };
 }
 
-internal enum ProxyCommand
+public enum ProxyCommand
 {
     Quit,
     Update

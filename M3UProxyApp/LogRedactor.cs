@@ -4,7 +4,7 @@ using Microsoft.Extensions.Configuration;
 
 namespace DotNetLab.M3UProxyApp;
 
-internal sealed class LogRedactor(IConfiguration configuration)
+public sealed class LogRedactor(IConfiguration configuration)
 {
     private readonly string[] secrets = GetSecrets(configuration);
 

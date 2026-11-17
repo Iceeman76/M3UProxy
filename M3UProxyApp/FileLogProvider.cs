@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 namespace DotNetLab.M3UProxyApp;
 
 [ProviderAlias("File")]
-internal sealed class FileLogProvider : ILoggerProvider
+public sealed class FileLogProvider : ILoggerProvider
 {
     private readonly object writeLock = new();
     private readonly FileLogOptions options;

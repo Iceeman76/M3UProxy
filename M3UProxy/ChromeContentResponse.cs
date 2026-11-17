@@ -1,6 +1,6 @@
 using System.Text;
 using System.Text.Json;
-using Microsoft.Playwright;
+using PuppeteerSharp;
 
 namespace DotNetLab.M3UProxy;
 
@@ -17,7 +17,7 @@ public sealed class ChromeContentResponse(IBrowserContext context, ICDPSession c
         while (isComplete is false)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var readResult = await ReadAsync();
+            var readResult = await ReadAsync().WaitAsync(cancellationToken);
             isComplete = readResult.GetProperty("eof").GetBoolean();
             var content = GetContent(readResult);
 
@@ -57,13 +57,15 @@ public sealed class ChromeContentResponse(IBrowserContext context, ICDPSession c
     {
         try
         {
-            await cdpSession.SendAsync("IO.close", new Dictionary<string, object> { ["handle"] = streamHandle });
+            await cdpSession.SendAsync("IO.close", new Dictionary<string, object> { ["handle"] = streamHandle }).WaitAsync(TimeSpan.FromSeconds(5));
         }
-        catch (PlaywrightException)
+        catch (Exception exception) when (exception is PuppeteerException or TimeoutException)
         {
         }
-
-        await context.DisposeAsync();
+        finally
+        {
+            await context.DisposeAsync();
+        }
     }
 
     private async Task<JsonElement> ReadAsync()

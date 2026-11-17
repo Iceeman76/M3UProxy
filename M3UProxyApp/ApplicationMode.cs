@@ -1,6 +1,6 @@
 namespace DotNetLab.M3UProxyApp;
 
-internal enum ApplicationMode
+public enum ApplicationMode
 {
     Download,
     Proxy

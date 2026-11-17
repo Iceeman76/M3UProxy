@@ -1,24 +1,25 @@
 using System.Text.Json;
-using Microsoft.Playwright;
+using Microsoft.Extensions.Logging;
+using PuppeteerSharp;
 
 namespace DotNetLab.M3UProxy;
 
-public sealed class ChromeContentClient : IAsyncDisposable
+public sealed class ChromeContentClient(BrowserOptions? options = null, ILogger? logger = null) : IAsyncDisposable
 {
-    private const float NavigationTimeoutMilliseconds = 300_000;
+    private static readonly TimeSpan NavigationTimeout = TimeSpan.FromMinutes(5);
+    private readonly LaunchOptions launchOptions = (options ?? new BrowserOptions()).CreateLaunchOptions();
     private readonly SemaphoreSlim initializationLock = new(1, 1);
-    private IPlaywright? playwright;
     private IBrowser? browser;
 
     public async Task<ChromeContentResponse> OpenAsync(string url, IReadOnlyDictionary<string, string>? headers = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(url);
-        var activeBrowser = await GetBrowserAsync();
-        var context = await activeBrowser.NewContextAsync(new BrowserNewContextOptions { Locale = "sv-SE", ExtraHTTPHeaders = headers });
+        var activeBrowser = await GetBrowserAsync(cancellationToken);
+        var context = await activeBrowser.CreateBrowserContextAsync();
 
         try
         {
-            return await OpenResponseAsync(context, url, cancellationToken);
+            return await OpenResponseAsync(context, url, headers, cancellationToken);
         }
         catch
         {
@@ -34,28 +35,27 @@ public sealed class ChromeContentClient : IAsyncDisposable
             await browser.DisposeAsync();
         }
 
-        playwright?.Dispose();
         initializationLock.Dispose();
     }
 
-    private static async Task<ChromeContentResponse> OpenResponseAsync(IBrowserContext context, string url, CancellationToken cancellationToken)
+    private static async Task<ChromeContentResponse> OpenResponseAsync(IBrowserContext context, string url, IReadOnlyDictionary<string, string>? headers, CancellationToken cancellationToken)
     {
         var page = await context.NewPageAsync();
-        page.SetDefaultNavigationTimeout(NavigationTimeoutMilliseconds);
-        var cdpSession = await context.NewCDPSessionAsync(page);
-        var responsePaused = CreateResponseTask(cdpSession);
-        await EnableResponseInterceptionAsync(cdpSession);
-        var navigationTask = page.GotoAsync(url, new PageGotoOptions { Timeout = NavigationTimeoutMilliseconds, WaitUntil = WaitUntilState.Commit });
-        var completedTask = await Task.WhenAny(responsePaused.Task, navigationTask).WaitAsync(cancellationToken);
+        var requestHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Accept-Language"] = "sv-SE" };
 
-        if (ReferenceEquals(completedTask, navigationTask))
+        foreach (var header in headers ?? new Dictionary<string, string>())
         {
-            await navigationTask;
-            throw new IOException("Chrome completed navigation without returning a response body.");
+            requestHeaders[header.Key] = header.Value;
         }
 
-        var pausedResponse = await responsePaused.Task.WaitAsync(cancellationToken);
-        var streamHandle = await TakeResponseStreamAsync(cdpSession, pausedResponse);
+        await page.SetExtraHttpHeadersAsync(requestHeaders);
+        var cdpSession = await page.CreateCDPSessionAsync();
+        await cdpSession.SendAsync("Emulation.setLocaleOverride", new { locale = "sv-SE" });
+        var responsePaused = CreateResponseTask(cdpSession);
+        await EnableResponseInterceptionAsync(cdpSession);
+        _ = NavigateAsync(cdpSession, url, responsePaused);
+        var pausedResponse = await responsePaused.Task.WaitAsync(NavigationTimeout, cancellationToken);
+        var streamHandle = await TakeResponseStreamAsync(cdpSession, pausedResponse).WaitAsync(cancellationToken);
 
         return new ChromeContentResponse(context, cdpSession, streamHandle, GetStatusCode(pausedResponse), GetHeaders(pausedResponse));
     }
@@ -63,16 +63,16 @@ public sealed class ChromeContentClient : IAsyncDisposable
     private static TaskCompletionSource<JsonElement> CreateResponseTask(ICDPSession cdpSession)
     {
         var responsePaused = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
-        cdpSession.Event("Fetch.requestPaused").OnEvent += async (eventSource, eventArgs) =>
+        cdpSession.MessageReceived += (_, eventArgs) =>
         {
-            if (IsDocumentResponse(eventArgs, out var response) is false)
+            if (eventArgs.MessageID is not "Fetch.requestPaused" || IsDocumentResponse(eventArgs.MessageData, out var response) is false)
             {
                 return;
             }
 
             if (response.GetProperty("responseStatusCode").GetInt32() is >= 300 and < 400)
             {
-                await ContinueRedirectAsync(cdpSession, responsePaused, response);
+                _ = ContinueRedirectAsync(cdpSession, responsePaused, response);
 
                 return;
             }
@@ -81,6 +81,23 @@ public sealed class ChromeContentClient : IAsyncDisposable
         };
 
         return responsePaused;
+    }
+
+    private static async Task NavigateAsync(ICDPSession cdpSession, string url, TaskCompletionSource<JsonElement> responsePaused)
+    {
+        try
+        {
+            var response = await cdpSession.SendAsync("Page.navigate", new { url });
+
+            if (response is { } navigation && navigation.TryGetProperty("errorText", out var error))
+            {
+                responsePaused.TrySetException(new IOException($"Browser navigation failed: {error.GetString()}"));
+            }
+        }
+        catch (Exception exception)
+        {
+            responsePaused.TrySetException(exception);
+        }
     }
 
     private static bool IsDocumentResponse(JsonElement? eventArgs, out JsonElement response)
@@ -123,14 +140,16 @@ public sealed class ChromeContentClient : IAsyncDisposable
         return streamResponse?.GetProperty("stream").GetString() ?? throw new IOException("Chrome did not return a response stream.");
     }
 
-    private async Task<IBrowser> GetBrowserAsync()
+    private async Task<IBrowser> GetBrowserAsync(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (browser is not null)
         {
             return browser;
         }
 
-        await initializationLock.WaitAsync();
+        await initializationLock.WaitAsync(cancellationToken);
 
         try
         {
@@ -139,8 +158,10 @@ public sealed class ChromeContentClient : IAsyncDisposable
                 return browser;
             }
 
-            playwright = await Playwright.CreateAsync();
-            browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions { Channel = "chrome", Headless = true });
+            browser = await Puppeteer.LaunchAsync(launchOptions);
+            var selection = string.IsNullOrWhiteSpace(options?.ExecutablePath) ? "channel" : "executable_path";
+            logger?.LogInformation("Browser started channel={Channel} executable_path={ExecutablePath} selection={Selection}", options?.Channel.Trim().ToLowerInvariant() ?? "chrome", browser.Process.StartInfo.FileName, selection);
+            cancellationToken.ThrowIfCancellationRequested();
 
             return browser;
         }

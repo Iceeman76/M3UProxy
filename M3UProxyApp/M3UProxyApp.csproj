@@ -29,10 +29,6 @@
     </ItemGroup>
 
     <ItemGroup>
-        <InternalsVisibleTo Include="M3UProxy.Tests" />
-    </ItemGroup>
-
-    <ItemGroup>
       <Folder Include="Properties\PublishProfiles\" />
     </ItemGroup>
 
@@ -40,12 +36,8 @@
       <None Remove="Properties\PublishProfiles\Folder-win-x64.pubxml" />
     </ItemGroup>
 
-    <Target Name="KeepPlaywrightDriverOutsideBundle" BeforeTargets="_ComputeFilesToBundle" Condition="'$(PublishSingleFile)' == 'true'">
+    <Target Name="ExcludePublishSymbols" BeforeTargets="_ComputeFilesToBundle" Condition="'$(PublishSingleFile)' == 'true'">
         <ItemGroup>
-            <ResolvedFileToPublish Update="@(ResolvedFileToPublish)" Condition="$([System.String]::Copy('%(ResolvedFileToPublish.RelativePath)').StartsWith('.playwright'))">
-                <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
-            </ResolvedFileToPublish>
-            <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(ResolvedFileToPublish.RelativePath)' == 'playwright.ps1'" />
             <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'$(CopyOutputSymbolsToPublishDirectory)' == 'false' and '%(ResolvedFileToPublish.Extension)' == '.pdb'" />
         </ItemGroup>
     </Target>

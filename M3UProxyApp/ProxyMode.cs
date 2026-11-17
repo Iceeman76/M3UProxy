@@ -10,12 +10,13 @@ using Spectre.Console;
 
 namespace DotNetLab.M3UProxyApp;
 
-internal static class ProxyMode
+public static class ProxyMode
 {
     public static async Task<int> RunAsync(IConfiguration configuration, CancellationToken cancellationToken, ILoggerFactory loggerFactory)
     {
         var downloads = configuration.GetSection("Downloads").Get<List<DownloadJob>>() ?? [];
         var options = configuration.GetSection("Proxy").Get<ProxyOptions>() ?? new ProxyOptions();
+        var browserOptions = configuration.GetSection("Browser").Get<BrowserOptions>() ?? new BrowserOptions();
         var sources = ProxySourceFactory.Create(options, downloads);
         var publicBaseUri = ProxySourceFactory.ValidateBaseUri(options.PublicBaseUrl, "Proxy:PublicBaseUrl");
         ProxySourceFactory.ValidateBaseUri(options.ListenUrl, "Proxy:ListenUrl");
@@ -26,8 +27,8 @@ internal static class ProxyMode
         builder.Services.AddSingleton(loggerFactory);
         builder.WebHost.UseUrls(options.ListenUrl);
         await using var application = builder.Build();
-        await using var chromeClient = new ChromeContentClient();
-        var downloadRefresh = new DownloadRefreshCoordinator(downloads, TimeSpan.FromMinutes(options.DownloadMaxAgeMinutes), loggerFactory);
+        await using var chromeClient = new ChromeContentClient(browserOptions, loggerFactory.CreateLogger<ChromeContentClient>());
+        var downloadRefresh = new DownloadRefreshCoordinator(downloads, TimeSpan.FromMinutes(options.DownloadMaxAgeMinutes), loggerFactory, browserOptions);
         var requestHandler = new ProxyRequestHandler(sources, publicBaseUri, options.ServeDownloadedFiles, chromeClient, downloadRefresh, loggerFactory.CreateLogger("DotNetLab.M3UProxyApp.Proxy"));
         var requestLogger = application.Services.GetRequiredService<ILoggerFactory>().CreateLogger("DotNetLab.M3UProxyApp.ProxyRequestLogger");
         application.Use((context, next) => ProxyRequestLogger.LogAsync(context, next, sources, options.ServeDownloadedFiles, requestLogger));

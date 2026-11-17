@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Http;
 
 namespace DotNetLab.M3UProxyApp;
 
-internal static class UpstreamRequestFactory
+public static class UpstreamRequestFactory
 {
     public static Uri CreateUri(HttpRequest request, ProxySource source, string path)
     {

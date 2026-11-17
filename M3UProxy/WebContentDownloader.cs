@@ -1,9 +1,10 @@
 using System.Diagnostics;
-using Microsoft.Playwright;
+using Microsoft.Extensions.Logging;
+using PuppeteerSharp;
 
 namespace DotNetLab.M3UProxy;
 
-public sealed class WebContentDownloader
+public sealed class WebContentDownloader(BrowserOptions? browserOptions = null, ILogger? logger = null)
 {
     private const int MaxAttempts = 3;
 
@@ -16,7 +17,7 @@ public sealed class WebContentDownloader
         var targetDirectory = Path.GetDirectoryName(targetPath) ?? throw new InvalidOperationException("The target path does not contain a directory.");
         Directory.CreateDirectory(targetDirectory);
         var temporaryPath = targetPath + ".download";
-        await using var client = new ChromeContentClient();
+        await using var client = new ChromeContentClient(browserOptions, logger);
 
         try
         {
@@ -31,7 +32,7 @@ public sealed class WebContentDownloader
 
                     return;
                 }
-                catch (Exception exception) when (attempt < MaxAttempts && exception is PlaywrightException or IOException or HttpRequestException)
+                catch (Exception exception) when (attempt < MaxAttempts && exception is PuppeteerException or IOException or HttpRequestException)
                 {
                     File.Delete(temporaryPath);
                     await Task.Delay(TimeSpan.FromSeconds(attempt), cancellationToken);

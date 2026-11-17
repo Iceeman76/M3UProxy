@@ -4,9 +4,9 @@
 
 # M3U Proxy
 
-M3U Proxy is a Windows console application that downloads IPTV playlists and EPG data through Google Chrome and can expose the same provider through a local, Xtream-compatible proxy.
+M3U Proxy is a console application that downloads IPTV playlists and EPG data through a headless browser and can expose the same provider through a local, Xtream-compatible proxy.
 
-M3U Proxy is a client-compatibility tool for IPTV sources that the user is **lawfully entitled and authorized to access through a proxy**. Some servers respond differently to browsers and other HTTP clients. M3U Proxy uses Chrome for upstream requests and presents a conventional local HTTP endpoint to the IPTV player. Browser-based requests do not grant additional access rights or permission to bypass a provider's restrictions.
+M3U Proxy is a client-compatibility tool for IPTV sources that the user is **lawfully entitled and authorized to access through a proxy**. Some servers respond differently to browsers and other HTTP clients. M3U Proxy uses the configured browser for upstream requests and presents a conventional local HTTP endpoint to the IPTV player. Browser-based requests do not grant additional access rights or permission to bypass a provider's restrictions.
 
 The application is not an IPTV service: it has no built-in channel catalogue, does not sell subscriptions or streaming rights, and does not itself authorize access to media. Provider URLs and access details are read from configuration maintained by the person deploying it. Any shared example configuration should contain fictional, non-working placeholders only.
 
@@ -17,12 +17,12 @@ The application is not an IPTV service: it has no built-in channel catalogue, do
 
 The application has two modes:
 
-- **Download M3U files** downloads the configured M3U and XMLTV files through headless Google Chrome.
+- **Download M3U files** downloads the configured M3U and XMLTV files through the configured headless browser.
 - **Start proxy** starts a local HTTP server that behaves like the relevant parts of an Xtream server.
 
 Proxy mode provides:
 
-- Xtream authentication and API forwarding through Chrome
+- Xtream authentication and API forwarding through the configured browser
 - Movie and series category forwarding
 - Movie, series, live, and timeshift stream forwarding
 - HTTP Range forwarding for seeking and resuming VOD
@@ -55,13 +55,13 @@ The IPTV player sees a normal local Xtream server. The upstream provider sees re
 
 ## Requirements
 
-- Windows
+- Windows or Linux
 - .NET 10 SDK or runtime
-- Google Chrome installed
+- Google Chrome or Microsoft Edge installed
 - Valid access to an IPTV provider
 - An IPTV player that supports M3U or Xtream sources
 
-The project currently targets `net10.0` and launches the installed Google Chrome channel through Microsoft Playwright.
+The project targets `net10.0` and uses PuppeteerSharp to launch the configured installed browser. Google Chrome is the default; Microsoft Edge and an explicit browser executable path are also supported. The browser runs headless, so a desktop session is not required. Linux installations still need the browser's system libraries.
 
 ## Configuration
 
@@ -73,6 +73,10 @@ Never publish a real configuration file containing provider credentials. Usernam
 
 ```json
 {
+  "browser": {
+    "channel": "chrome",
+    "executablePath": null
+  },
   "downloads": [
     {
       "name": "Example playlist",
@@ -101,6 +105,28 @@ Never publish a real configuration file containing provider credentials. Usernam
 }
 ```
 
+### Browser settings
+
+The `browser` section applies to downloads, proxy requests, and automatic or manual download refreshes.
+
+| Property | Default | Description |
+| --- | --- | --- |
+| `channel` | `chrome` | Installed browser channel: `chrome`, `chrome-beta`, `chrome-dev`, `chrome-canary`, `msedge`, `msedge-beta`, `msedge-dev`, or `msedge-canary`. Names are case-insensitive. The selected channel must be installed and available on the operating system. |
+| `executablePath` | `null` | Optional path to a browser executable. When set, this overrides `channel`. Relative paths resolve against the application directory. |
+
+For Microsoft Edge on Windows, set `"channel": "msedge"`. Chrome channels are found in their standard installation locations. Edge channels are found in standard installation locations on Windows and Linux; use `executablePath` for a custom installation or a Chromium executable. Browsers are not downloaded automatically.
+
+For example, to select a specific executable on Linux:
+
+```json
+"browser": {
+  "channel": "chrome",
+  "executablePath": "/usr/bin/chromium"
+}
+```
+
+Restart the application after changing browser settings.
+
 ### Download settings
 
 Each entry under `downloads` has the following properties:
@@ -119,7 +145,7 @@ Downloads run in parallel. Each download is first written to a temporary file an
 | --- | --- |
 | `listenUrl` | The address Kestrel listens on. The default restricts access to the current computer. |
 | `publicBaseUrl` | The address written into playlists and Xtream login responses. This is the address the IPTV player must be able to reach. |
-| `serveDownloadedFiles` | When `true`, M3U and XMLTV responses come from the configured local files. When `false`, those responses are fetched upstream through Chrome. |
+| `serveDownloadedFiles` | When `true`, M3U and XMLTV responses come from the configured local files. When `false`, those responses are fetched upstream through the configured browser. |
 | `downloadMaxAgeMinutes` | The maximum age of downloaded files. A GET request for M3U or XMLTV automatically updates all configured downloads when any file is missing or has reached this age. Defaults to `60`. |
 | `sources` | Providers available through the local proxy. |
 
@@ -241,10 +267,10 @@ With the default `serveDownloadedFiles: true` configuration:
 | --- | --- |
 | M3U playlist | Local downloaded file |
 | XMLTV EPG | Local downloaded file |
-| Xtream login | Provider through Chrome |
-| Live, movie, and series categories | Provider through Chrome |
-| Movie and series metadata | Provider through Chrome |
-| Live and VOD media | Provider through Chrome |
+| Xtream login | Provider through the configured browser |
+| Live, movie, and series categories | Provider through the configured browser |
+| Movie and series metadata | Provider through the configured browser |
+| Live and VOD media | Provider through the configured browser |
 
 The proxy must therefore remain running during catalog refreshes and playback. It can be stopped when the IPTV player is not being used.
 
@@ -361,7 +387,7 @@ Legacy stream paths beginning directly with the username and password are also f
 
 ### The proxy says that the downloaded playlist or EPG was not found
 
-Run download mode first and verify the configured `filePath`. Alternatively, set `serveDownloadedFiles` to `false` to fetch those responses through Chrome.
+Run download mode first and verify the configured `filePath`. Alternatively, set `serveDownloadedFiles` to `false` to fetch those responses through the configured browser.
 
 ### Movie or series categories do not appear
 
@@ -374,7 +400,7 @@ Check the stream request status in the console:
 - `200` or `206` indicates that the provider returned media.
 - `401` indicates unknown credentials at the local proxy.
 - `4xx` or `5xx` from upstream usually indicates an account, provider, availability, or connection problem.
-- Local `502` means the proxy could not complete the upstream Chrome request.
+- Local `502` means the proxy could not complete the upstream browser request.
 
 ### Seeking does not work
 
@@ -384,9 +410,9 @@ The proxy forwards the player's `Range` header and the provider's `Content-Range
 
 Verify `listenUrl`, `publicBaseUrl`, the computer's LAN address, and Windows Firewall. Do not use `127.0.0.1` as `publicBaseUrl` when the player is running on a different device.
 
-### Chrome cannot be started
+### The configured browser cannot be started
 
-Install Google Chrome and make sure it can start normally for the current Windows user. The application explicitly uses the installed Chrome channel rather than downloading a separate browser build.
+Install the selected Chrome or Edge channel and make sure it can start under the account running the application. Check `browser.channel`, or set `browser.executablePath` to the browser executable. On Linux, install the browser's required system libraries as well. The application uses an installed browser rather than downloading a separate browser build.
 
 ## Legal use and responsibility
 
@@ -421,5 +447,5 @@ This documentation does not constitute legal advice. If the legality of a partic
 - Download refreshes are manual and are not scheduled by the application.
 - Proxy mode must remain running during API access and playback.
 - Provider behavior still determines channel availability, codecs, stream quality, and account limits.
-- Every proxied upstream request creates an isolated Chrome browser context, while the Chrome browser process itself is reused.
+- Every proxied upstream request creates an isolated browser context, while the browser process itself is reused.
 - HTTPS termination and authentication in front of the local proxy are not included.

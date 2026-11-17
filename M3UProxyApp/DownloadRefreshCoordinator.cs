@@ -1,8 +1,9 @@
+using DotNetLab.M3UProxy;
 using Microsoft.Extensions.Logging;
 
 namespace DotNetLab.M3UProxyApp;
 
-internal sealed class DownloadRefreshCoordinator(IReadOnlyCollection<DownloadJob> jobs, TimeSpan maxAge, ILoggerFactory? loggerFactory = null)
+public sealed class DownloadRefreshCoordinator(IReadOnlyCollection<DownloadJob> jobs, TimeSpan maxAge, ILoggerFactory? loggerFactory = null, BrowserOptions? browserOptions = null)
 {
     private readonly SemaphoreSlim updateLock = new(1, 1);
 
@@ -12,7 +13,7 @@ internal sealed class DownloadRefreshCoordinator(IReadOnlyCollection<DownloadJob
 
         try
         {
-            await DownloadMode.RunAsync(jobs, cancellationToken, loggerFactory);
+            await DownloadMode.RunAsync(jobs, cancellationToken, loggerFactory, browserOptions);
         }
         finally
         {
@@ -33,7 +34,7 @@ internal sealed class DownloadRefreshCoordinator(IReadOnlyCollection<DownloadJob
         {
             if (NeedsUpdate(DateTime.UtcNow))
             {
-                await DownloadMode.RunAsync(jobs, cancellationToken, loggerFactory);
+                await DownloadMode.RunAsync(jobs, cancellationToken, loggerFactory, browserOptions);
 
                 return true;
             }
@@ -46,5 +47,5 @@ internal sealed class DownloadRefreshCoordinator(IReadOnlyCollection<DownloadJob
         }
     }
 
-    internal bool NeedsUpdate(DateTime utcNow) => jobs.Any(job => File.Exists(job.FilePath) is false || utcNow - File.GetLastWriteTimeUtc(job.FilePath) >= maxAge);
+    public bool NeedsUpdate(DateTime utcNow) => jobs.Any(job => File.Exists(job.FilePath) is false || utcNow - File.GetLastWriteTimeUtc(job.FilePath) >= maxAge);
 }

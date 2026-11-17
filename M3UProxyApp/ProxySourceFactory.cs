@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.WebUtilities;
 
 namespace DotNetLab.M3UProxyApp;
 
-internal static class ProxySourceFactory
+public static class ProxySourceFactory
 {
     public static IReadOnlyList<ProxySource> Create(ProxyOptions options, IReadOnlyCollection<DownloadJob> downloads)
     {

@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 
 namespace DotNetLab.M3UProxyApp;
 
-internal static class ProxyRequestLogger
+public static class ProxyRequestLogger
 {
     private static readonly object FileSourceKey = new();
 
@@ -70,7 +70,7 @@ internal static class ProxyRequestLogger
         return $" file_source={fileSource.Source} file_age={age}";
     }
 
-    internal static string FormatAge(TimeSpan age)
+    public static string FormatAge(TimeSpan age)
     {
         var normalizedAge = age < TimeSpan.Zero ? TimeSpan.Zero : age;
 

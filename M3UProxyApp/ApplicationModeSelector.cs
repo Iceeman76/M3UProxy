@@ -2,7 +2,7 @@ using Spectre.Console;
 
 namespace DotNetLab.M3UProxyApp;
 
-internal static class ApplicationModeSelector
+public static class ApplicationModeSelector
 {
     private const string DownloadLabel = "Download M3U files";
     private const string ProxyLabel = "Start proxy";

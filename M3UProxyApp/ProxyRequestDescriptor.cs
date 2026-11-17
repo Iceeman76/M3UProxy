@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Http;
 
 namespace DotNetLab.M3UProxyApp;
 
-internal static class ProxyRequestDescriptor
+public static class ProxyRequestDescriptor
 {
     public static string Describe(HttpRequest request)
     {

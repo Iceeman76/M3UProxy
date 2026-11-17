@@ -2,7 +2,7 @@ using System.Text.Json.Nodes;
 
 namespace DotNetLab.M3UProxyApp;
 
-internal static class XtreamResponseRewriter
+public static class XtreamResponseRewriter
 {
     public static string RewriteLogin(string content, Uri publicBaseUri)
     {
