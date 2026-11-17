@@ -1,6 +1,8 @@
+using Microsoft.Extensions.Logging;
+
 namespace DotNetLab.M3UProxyApp;
 
-internal sealed class DownloadRefreshCoordinator(IReadOnlyCollection<DownloadJob> jobs, TimeSpan maxAge)
+internal sealed class DownloadRefreshCoordinator(IReadOnlyCollection<DownloadJob> jobs, TimeSpan maxAge, ILoggerFactory? loggerFactory = null)
 {
     private readonly SemaphoreSlim updateLock = new(1, 1);
 
@@ -10,7 +12,7 @@ internal sealed class DownloadRefreshCoordinator(IReadOnlyCollection<DownloadJob
 
         try
         {
-            await DownloadMode.RunAsync(jobs, cancellationToken);
+            await DownloadMode.RunAsync(jobs, cancellationToken, loggerFactory);
         }
         finally
         {
@@ -31,7 +33,7 @@ internal sealed class DownloadRefreshCoordinator(IReadOnlyCollection<DownloadJob
         {
             if (NeedsUpdate(DateTime.UtcNow))
             {
-                await DownloadMode.RunAsync(jobs, cancellationToken);
+                await DownloadMode.RunAsync(jobs, cancellationToken, loggerFactory);
 
                 return true;
             }

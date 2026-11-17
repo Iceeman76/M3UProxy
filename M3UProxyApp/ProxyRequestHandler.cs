@@ -1,10 +1,11 @@
 using System.Text;
 using DotNetLab.M3UProxy;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 
 namespace DotNetLab.M3UProxyApp;
 
-internal sealed class ProxyRequestHandler(IReadOnlyList<ProxySource> sources, Uri publicBaseUri, bool serveDownloadedFiles, ChromeContentClient chromeClient, DownloadRefreshCoordinator downloadRefresh)
+internal sealed class ProxyRequestHandler(IReadOnlyList<ProxySource> sources, Uri publicBaseUri, bool serveDownloadedFiles, ChromeContentClient chromeClient, DownloadRefreshCoordinator downloadRefresh, ILogger? logger = null)
 {
     private static readonly string[] ForwardedResponseHeaders = ["accept-ranges", "cache-control", "content-disposition", "content-range", "content-type", "etag", "last-modified"];
 
@@ -29,6 +30,7 @@ internal sealed class ProxyRequestHandler(IReadOnlyList<ProxySource> sources, Ur
         }
         catch (Exception exception)
         {
+            logger?.LogError(exception, "Proxy request failed source={Source} request={Description}", source.Name, ProxyRequestDescriptor.Describe(context.Request));
             await WriteErrorAsync(context, exception);
         }
     }

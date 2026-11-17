@@ -29,7 +29,7 @@ Proxy mode provides:
 - Rewriting of provider URLs to the configured local proxy address
 - Local serving of previously downloaded M3U and XMLTV files
 - Multiple provider sources, selected by their username and password
-- Credential-safe console request logging
+- Credential-safe console and rotating file logging
 
 ## Why a proxy is necessary
 
@@ -266,18 +266,34 @@ The proxy does not attempt to bypass provider rate limits. A `429` response shou
 
 ## Request logging
 
-Proxy mode uses `Microsoft.Extensions.Logging.ILogger` with the console provider. Configure the minimum level in `appsettings.json`:
+Both modes use `Microsoft.Extensions.Logging.ILogger`. Console logging is enabled by default; file logging is opt-in. Configure them independently in `appsettings.json`:
 
 ```json
 "Logging": {
   "LogLevel": {
     "Default": "Information",
     "Microsoft": "None"
+  },
+  "Console": {
+    "Enabled": true,
+    "LogLevel": {
+      "Default": "Warning"
+    }
+  },
+  "File": {
+    "Enabled": true,
+    "Path": "logs/m3uproxy.log",
+    "MaxFileSizeBytes": 10485760,
+    "RetainedFileCount": 7,
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft": "None"
+    }
   }
 }
 ```
 
-| Level | Console request output |
+| Level | Request output |
 | --- | --- |
 | `Trace` or `Debug` | Request starts and all completions. |
 | `Information` | Successful completions, warnings, and errors. This is the default. |
@@ -285,9 +301,26 @@ Proxy mode uses `Microsoft.Extensions.Logging.ILogger` with the console provider
 | `Error` | HTTP 5xx completions and unhandled failures. |
 | `Critical` or `None` | No request entries; the application does not emit critical request logs. |
 
-Client cancellations are logged at `Debug` unless the response already has an error status. Unhandled exceptions are logged as failed requests and rethrown. Exception messages are omitted because they may contain provider credentials.
+Client cancellations are logged at `Debug` unless the response already has an error status. Unhandled exceptions are logged as failed requests and rethrown. Application and upstream errors include their exception type and sanitized message.
 
-You can override the request category separately using `Logging:LogLevel:DotNetLab.M3UProxyApp.ProxyRequestLogger`. Keep `Microsoft` at `None` to suppress framework request logs, which can include raw URLs containing credentials. Restart the application after changing settings. Menus, startup information, download progress, and top-level application errors are displayed independently of the log level.
+You can override the request category using `Logging:LogLevel:DotNetLab.M3UProxyApp.ProxyRequestLogger`. Provider-specific `Logging:Console:LogLevel` and `Logging:File:LogLevel` settings override shared settings; each supports category overrides. Without overrides, both providers inherit `Logging:LogLevel` (default `Information`). Keep `Microsoft` at `None` to reduce framework noise. Restart after changing settings. `Logging:Console:Enabled` controls diagnostic log entries; interactive menus, startup information, progress, and fatal error reports remain visible independently.
+
+### File logging settings
+
+| Setting under `Logging:File` | Default | Behavior |
+| --- | --- | --- |
+| `Enabled` | `false` | Enables file logging in both download and proxy mode. |
+| `Path` | `logs/m3uproxy.log` | Active log file. Relative paths resolve against the application directory, independently of the working directory. Parent directories are created automatically. |
+| `MaxFileSizeBytes` | `10485760` (10 MiB) | Rotates before the next entry would exceed this size. Minimum is `256`. An oversized entry is replaced by a short warning. |
+| `RetainedFileCount` | `7` | Maximum number of files, including the active file. Minimum is `1`. |
+
+Files also rotate on the first write after a UTC date change, including after a restart. Archives are named `<Path>.archive-<UTC timestamp>-<unique ID>`. Retention runs on startup and rotation and only removes archives belonging to that exact configured path. The default bounds new logs to approximately 70 MiB. Changing the path leaves the old location for the operator to clean up. Use a separate path for each application instance.
+
+Each entry contains a UTC timestamp, level, category, and message. Both destinations sanitize formatted messages, categories, and exception messages before writing: HTTP URLs are replaced entirely, credential-bearing stream paths and query values are masked, and configured provider credentials (including URL-encoded forms), tokens, and authorization values are redacted. Line breaks are escaped to keep entries on one line. Startup, shutdown, download refresh summaries, individual download outcomes, proxy requests, and upstream failures are logged.
+
+The file writer uses platform-independent .NET APIs on Windows and Linux. For unattended execution or a future service host, configure an absolute path such as `C:\ProgramData\M3UProxy\logs\m3uproxy.log` or `/var/log/m3uproxy/m3uproxy.log`. The service account needs directory traversal, file creation, write, rename, and delete permissions in that directory so rotation and retention can work. Pre-create the directory with those permissions if its parent is not writable. Restrict access to operators who need the logs.
+
+Entries are written and flushed synchronously; graceful shutdown disposes the writer after the final application entry. Ctrl+C and Linux SIGTERM request graceful cancellation. Startup logging failures report to standard error and stop startup. Later write, rotation, or retention failures report to standard error and disable file logging for that run; console logging continues. Monitor standard error in unattended deployments. No entries are queued in memory.
 
 Logs include the request destination, request type, configured source name, result status, outcome, and duration. Raw URLs, usernames, and passwords are not printed by the request logger.
 

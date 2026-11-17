@@ -1,5 +1,13 @@
 namespace DotNetLab.M3UProxyApp;
 
+internal sealed record FileLogOptions
+{
+    public bool Enabled { get; init; }
+    public string Path { get; init; } = "logs/m3uproxy.log";
+    public long MaxFileSizeBytes { get; init; } = 10 * 1024 * 1024;
+    public int RetainedFileCount { get; init; } = 7;
+}
+
 internal sealed record DownloadJob
 {
     public string Name { get; init; } = string.Empty;

@@ -12,7 +12,7 @@ namespace DotNetLab.M3UProxyApp;
 
 internal static class ProxyMode
 {
-    public static async Task<int> RunAsync(IConfiguration configuration, CancellationToken cancellationToken)
+    public static async Task<int> RunAsync(IConfiguration configuration, CancellationToken cancellationToken, ILoggerFactory loggerFactory)
     {
         var downloads = configuration.GetSection("Downloads").Get<List<DownloadJob>>() ?? [];
         var options = configuration.GetSection("Proxy").Get<ProxyOptions>() ?? new ProxyOptions();
@@ -23,21 +23,18 @@ internal static class ProxyMode
         builder.Configuration.Sources.Clear();
         builder.Configuration.AddConfiguration(configuration);
         builder.Logging.ClearProviders();
-        builder.Logging.AddSimpleConsole(console =>
-        {
-            console.SingleLine = true;
-            console.TimestampFormat = "[yyyy-MM-dd HH:mm:ss] ";
-        });
+        builder.Services.AddSingleton(loggerFactory);
         builder.WebHost.UseUrls(options.ListenUrl);
         await using var application = builder.Build();
         await using var chromeClient = new ChromeContentClient();
-        var downloadRefresh = new DownloadRefreshCoordinator(downloads, TimeSpan.FromMinutes(options.DownloadMaxAgeMinutes));
-        var requestHandler = new ProxyRequestHandler(sources, publicBaseUri, options.ServeDownloadedFiles, chromeClient, downloadRefresh);
+        var downloadRefresh = new DownloadRefreshCoordinator(downloads, TimeSpan.FromMinutes(options.DownloadMaxAgeMinutes), loggerFactory);
+        var requestHandler = new ProxyRequestHandler(sources, publicBaseUri, options.ServeDownloadedFiles, chromeClient, downloadRefresh, loggerFactory.CreateLogger("DotNetLab.M3UProxyApp.Proxy"));
         var requestLogger = application.Services.GetRequiredService<ILoggerFactory>().CreateLogger("DotNetLab.M3UProxyApp.ProxyRequestLogger");
         application.Use((context, next) => ProxyRequestLogger.LogAsync(context, next, sources, options.ServeDownloadedFiles, requestLogger));
         application.MapMethods("/{**path}", [HttpMethods.Get, HttpMethods.Head], requestHandler.HandleAsync);
         WriteStartupInformation(options, sources, publicBaseUri);
         await application.StartAsync(cancellationToken);
+        loggerFactory.CreateLogger("DotNetLab.M3UProxyApp.Proxy").LogInformation("Proxy started with {SourceCount} sources", sources.Count);
         await WaitForExitAsync(application, downloadRefresh, cancellationToken);
 
         return 0;
@@ -77,7 +74,7 @@ internal static class ProxyMode
     private static void WriteStartupInformation(ProxyOptions options, IEnumerable<ProxySource> sources, Uri publicBaseUri)
     {
         AnsiConsole.MarkupLine($"Proxy listening on [cyan]{Markup.Escape(options.ListenUrl)}[/]. Press [yellow]U[/] to update files. Press [yellow]Q[/] or [grey]Ctrl+C[/] to exit the application.\n");
-        AnsiConsole.MarkupLine("Request destinations: LOCAL stays inside the proxy, UPSTREAM contacts the provider. Configure Logging:LogLevel to filter console logs.\n");
+        AnsiConsole.MarkupLine("Request destinations: LOCAL stays inside the proxy, UPSTREAM contacts the provider. Configure Logging to filter console and file logs.\n");
 
         if (options.ServeDownloadedFiles)
         {

@@ -1,40 +1,45 @@
 using System.Diagnostics;
 using DotNetLab.M3UProxy;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Spectre.Console;
 
 namespace DotNetLab.M3UProxyApp;
 
 internal static class DownloadMode
 {
-    public static async Task<int> RunAsync(IConfiguration configuration, CancellationToken cancellationToken)
+    public static async Task<int> RunAsync(IConfiguration configuration, CancellationToken cancellationToken, ILoggerFactory loggerFactory)
     {
         var jobs = configuration.GetSection("Downloads").Get<List<DownloadJob>>() ?? [];
 
-        return await RunAsync(jobs, cancellationToken);
+        return await RunAsync(jobs, cancellationToken, loggerFactory);
     }
 
-    public static async Task<int> RunAsync(IReadOnlyCollection<DownloadJob> jobs, CancellationToken cancellationToken)
+    public static async Task<int> RunAsync(IReadOnlyCollection<DownloadJob> jobs, CancellationToken cancellationToken, ILoggerFactory? loggerFactory = null)
     {
+        var logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger("DotNetLab.M3UProxyApp.Download");
         Validate(jobs);
+        logger.LogInformation("Download refresh starting jobs={JobCount}", jobs.Count);
         AnsiConsole.MarkupLine($"Starting [cyan]{jobs.Count}[/] parallel download(s). Press [grey]Ctrl+C[/] to cancel.\n");
         var totalStopwatch = Stopwatch.StartNew();
-        var results = await RunDownloadsAsync(jobs, cancellationToken);
+        var results = await RunDownloadsAsync(jobs, cancellationToken, logger);
         totalStopwatch.Stop();
         var succeeded = results.Count(result => result.Success);
         var failed = results.Length - succeeded;
         WriteResults(results, totalStopwatch.Elapsed, succeeded, failed);
+        logger.LogInformation("Download refresh completed succeeded={Succeeded} failed={Failed} duration_ms={ElapsedMilliseconds}", succeeded, failed, totalStopwatch.ElapsedMilliseconds);
 
         return failed is 0 ? 0 : 1;
     }
 
-    private static async Task<DownloadResult[]> RunDownloadsAsync(IEnumerable<DownloadJob> jobs, CancellationToken cancellationToken)
+    private static async Task<DownloadResult[]> RunDownloadsAsync(IEnumerable<DownloadJob> jobs, CancellationToken cancellationToken, ILogger logger)
     {
         var results = Array.Empty<DownloadResult>();
         var progress = AnsiConsole.Progress().AutoClear(false).HideCompleted(false).Columns(new SpinnerColumn(), new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new DownloadedColumn(), new TransferSpeedColumn(), new RemainingTimeColumn());
         await progress.StartAsync(async context =>
         {
-            var tasks = jobs.Select(job => RunDownloadAsync(job, CreateProgressTask(context, job), cancellationToken));
+            var tasks = jobs.Select(job => RunDownloadAsync(job, CreateProgressTask(context, job), cancellationToken, logger));
             results = await Task.WhenAll(tasks);
         });
 
@@ -83,7 +88,7 @@ internal static class DownloadMode
         }
     }
 
-    private static async Task<DownloadResult> RunDownloadAsync(DownloadJob job, ProgressTask progressTask, CancellationToken cancellationToken)
+    private static async Task<DownloadResult> RunDownloadAsync(DownloadJob job, ProgressTask progressTask, CancellationToken cancellationToken, ILogger logger)
     {
         var stopwatch = Stopwatch.StartNew();
         var progress = new InlineProgress<DownloadProgress>(value =>
@@ -106,16 +111,23 @@ internal static class DownloadMode
             progressTask.MaxValue = Math.Max(bytes, 1);
             progressTask.IsIndeterminate = false;
             progressTask.Value = progressTask.MaxValue;
+            logger.LogInformation("Download completed job={Job} bytes={Bytes} duration_ms={ElapsedMilliseconds}", job.Name, bytes, stopwatch.ElapsedMilliseconds);
 
             return new DownloadResult(job, true, bytes, stopwatch.Elapsed, null);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            logger.LogInformation("Download cancelled job={Job}", job.Name);
+            throw;
+        }
         catch (Exception exception)
         {
+            logger.LogError(exception, "Download failed job={Job}", job.Name);
             stopwatch.Stop();
             progressTask.Description = $"{Markup.Escape(job.Name)} [red](failed)[/]";
             progressTask.StopTask();
 
-            return new DownloadResult(job, false, null, stopwatch.Elapsed, exception.Message);
+            return new DownloadResult(job, false, null, stopwatch.Elapsed, $"{exception.GetType().Name}; see logs for details");
         }
     }
 
