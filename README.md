@@ -112,7 +112,7 @@ The `browser` section applies to downloads, proxy requests, and automatic or man
 | Property | Default | Description |
 | --- | --- | --- |
 | `channel` | `chrome` | Installed browser channel: `chrome`, `chrome-beta`, `chrome-dev`, `chrome-canary`, `msedge`, `msedge-beta`, `msedge-dev`, or `msedge-canary`. Names are case-insensitive. The selected channel must be installed and available on the operating system. |
-| `executablePath` | `null` | Optional path to a browser executable. When set, this overrides `channel`. Relative paths resolve against the application directory. |
+| `executablePath` | `null` | Optional path to a browser executable. When set, this overrides `channel`. Relative paths resolve against the selected configuration file's directory. |
 
 For Microsoft Edge on Windows, set `"channel": "msedge"`. Chrome channels are found in their standard installation locations. Edge channels are found in standard installation locations on Windows and Linux; use `executablePath` for a custom installation or a Chromium executable. Browsers are not downloaded automatically.
 
@@ -215,6 +215,14 @@ M3UProxyApp.exe --proxy
 
 Press `Ctrl+C` to cancel downloads. In proxy mode, press `U` to update the configured M3U and XMLTV files. Press `Q` to exit the application, or use `Ctrl+C` as a fallback.
 
+### Background service mode
+
+Run with `--service --proxy` for continuous proxy operation, or `--service --download` for scheduled downloads without an HTTP server. `--config <path>` selects a configuration file. Service mode uses Windows Service hosting or systemd and displays no menus, keyboard commands, or progress bars.
+
+`Service:RefreshIntervalMinutes` defaults to `60`, and `Service:RefreshOnStartup` defaults to `true`. Set the interval to `0` to disable periodic refresh in proxy service mode. Scheduled and request-triggered downloads cannot overlap. Relative file paths resolve against the selected configuration file's directory, so service working directories do not affect them.
+
+See [Running as a service](docs/services.md) for account permissions, browser prerequisites, logging, installation, and removal on Windows and Linux.
+
 ## Recommended workflow
 
 When `serveDownloadedFiles` is `true`:
@@ -225,7 +233,7 @@ When `serveDownloadedFiles` is `true`:
 4. Keep the proxy running while the IPTV player refreshes or plays content.
 5. Stop the proxy when IPTV access is no longer needed.
 
-The proxy does not watch the files or schedule downloads. An M3U or XMLTV request refreshes stale downloads according to `downloadMaxAgeMinutes`. You can also press `U` while the proxy is running or repeat the download step whenever an immediate refresh is required.
+In interactive mode, the proxy does not watch files or schedule downloads. An M3U or XMLTV request refreshes stale downloads according to `downloadMaxAgeMinutes`. You can also press `U` while the proxy is running or repeat the download step whenever an immediate refresh is required. Service mode additionally supports scheduled refreshes.
 
 ## Configuring a typical IPTV player
 
@@ -336,19 +344,23 @@ You can override the request category using `Logging:LogLevel:DotNetLab.M3UProxy
 | Setting under `Logging:File` | Default | Behavior |
 | --- | --- | --- |
 | `Enabled` | `false` | Enables file logging in both download and proxy mode. |
-| `Path` | `logs/m3uproxy.log` | Active log file. Relative paths resolve against the application directory, independently of the working directory. Parent directories are created automatically. |
+| `Path` | `logs/m3uproxy.log` | Active log file. Relative paths resolve against the selected configuration file's directory, independently of the working directory. Parent directories are created automatically. |
 | `MaxFileSizeBytes` | `10485760` (10 MiB) | Rotates before the next entry would exceed this size. Minimum is `256`. An oversized entry is replaced by a short warning. |
 | `RetainedFileCount` | `7` | Maximum number of files, including the active file. Minimum is `1`. |
 
 Files also rotate on the first write after a UTC date change, including after a restart. Archives are named `<Path>.archive-<UTC timestamp>-<unique ID>`. Retention runs on startup and rotation and only removes archives belonging to that exact configured path. The default bounds new logs to approximately 70 MiB. Changing the path leaves the old location for the operator to clean up. Use a separate path for each application instance.
 
-Each entry contains a UTC timestamp, level, category, and message. Both destinations sanitize formatted messages, categories, and exception messages before writing: HTTP URLs are replaced entirely, credential-bearing stream paths and query values are masked, and configured provider credentials (including URL-encoded forms), tokens, and authorization values are redacted. Line breaks are escaped to keep entries on one line. Startup, shutdown, download refresh summaries, individual download outcomes, proxy requests, and upstream failures are logged.
+Each entry contains a UTC timestamp, level, category, and message. Both destinations sanitize formatted messages, categories, and exception messages before writing: HTTP URLs containing paths, credentials, queries, or fragments are replaced entirely, credential-bearing stream paths and query values are masked, and configured provider credentials (including URL-encoded forms), tokens, and authorization values are redacted. Origin URLs without sensitive parts remain visible so the configured proxy addresses can be inspected. Line breaks are escaped to keep entries on one line. Startup, shutdown, download refresh summaries, individual download outcomes, proxy requests, and upstream failures are logged.
 
-The file writer uses platform-independent .NET APIs on Windows and Linux. For unattended execution or a future service host, configure an absolute path such as `C:\ProgramData\M3UProxy\logs\m3uproxy.log` or `/var/log/m3uproxy/m3uproxy.log`. The service account needs directory traversal, file creation, write, rename, and delete permissions in that directory so rotation and retention can work. Pre-create the directory with those permissions if its parent is not writable. Restrict access to operators who need the logs.
+At proxy startup, an `Information` entry shows `listen_url` and `public_base_url`. Each configured download is listed with its name, local path, and `status=EXISTS file_age=2h15m` or `status=MISSING file_age=missing`. File ages use the last modification time in UTC. File status is also logged before and after download batches, including scheduled service updates. These entries appear in both enabled logging destinations according to their configured levels.
+
+The file writer uses platform-independent .NET APIs on Windows and Linux. For unattended execution or service mode, configure an absolute path such as `C:\ProgramData\M3UProxy\logs\m3uproxy.log` or `/var/log/m3uproxy/m3uproxy.log`. The service account needs directory traversal, file creation, write, rename, and delete permissions in that directory so rotation and retention can work. Pre-create the directory with those permissions if its parent is not writable. Restrict access to operators who need the logs.
 
 Entries are written and flushed synchronously; graceful shutdown disposes the writer after the final application entry. Ctrl+C and Linux SIGTERM request graceful cancellation. Startup logging failures report to standard error and stop startup. Later write, rotation, or retention failures report to standard error and disable file logging for that run; console logging continues. Monitor standard error in unattended deployments. No entries are queued in memory.
 
-Logs include the request destination, request type, configured source name, result status, outcome, and duration. Raw URLs, usernames, and passwords are not printed by the request logger.
+Logs include the request destination, request type, configured source name, client IP address (`client_ip`), player/application identifier (`user_agent`), result status, outcome, and duration. Client details appear on both start and completion entries. Missing details are shown as `unknown`. User-Agent is quoted, escaped, limited to 512 characters, and passed through the same credential redaction as other log fields.
+
+The client IP is the direct connection's remote address; IPv4-mapped IPv6 addresses are shown as IPv4. Forwarded headers are not trusted automatically, so a reverse proxy or shared network gateway can make multiple clients appear under the same IP. User-Agent is supplied by the client and may be absent or identical across players. Raw request URLs, usernames, and passwords remain omitted or redacted.
 
 - `LOCAL` entries are handled by the proxy, such as M3U and XMLTV responses served from downloaded files. Their completion entries include `file_source=CACHE` or `file_source=SERVER_REFRESH` and the resulting `file_age`.
 - `UPSTREAM` entries contact the configured provider, such as Xtream API requests and media streams.
@@ -357,12 +369,12 @@ Logs include the request destination, request type, configured source name, resu
 Example messages with `Debug` enabled (the console also includes the timestamp, level, and category):
 
 ```text
---> UPSTREAM GET Xtream get_vod_categories source=Example
-<-- UPSTREAM GET Xtream get_vod_categories source=Example status=200 outcome=completed duration_ms=842
---> LOCAL GET M3U playlist source=Example
-<-- LOCAL GET M3U playlist source=Example file_source=CACHE file_age=12m34s status=200 outcome=completed duration_ms=18
-<-- LOCAL GET XMLTV EPG source=Example file_source=SERVER_REFRESH file_age=0s status=200 outcome=completed duration_ms=4321
---> UPSTREAM GET movie stream source=Example
+--> UPSTREAM GET Xtream get_vod_categories source=Example client_ip=192.168.1.20 user_agent="VLC/3.0.21"
+<-- UPSTREAM GET Xtream get_vod_categories source=Example client_ip=192.168.1.20 user_agent="VLC/3.0.21" status=200 outcome=completed duration_ms=842
+--> LOCAL GET M3U playlist source=Example client_ip=192.168.1.21 user_agent="IPTV Player"
+<-- LOCAL GET M3U playlist source=Example client_ip=192.168.1.21 user_agent="IPTV Player" file_source=CACHE file_age=12m34s status=200 outcome=completed duration_ms=18
+<-- LOCAL GET XMLTV EPG source=Example client_ip=192.168.1.21 user_agent="IPTV Player" file_source=SERVER_REFRESH file_age=0s status=200 outcome=completed duration_ms=4321
+--> UPSTREAM GET movie stream source=Example client_ip=192.168.1.20 user_agent="VLC/3.0.21"
 ```
 
 A stream completion entry appears when playback ends or the player closes the connection.
@@ -444,7 +456,7 @@ This documentation does not constitute legal advice. If the legality of a partic
 
 ## Current limitations
 
-- Download refreshes are manual and are not scheduled by the application.
+- Scheduled refreshes are available in service mode; interactive mode uses manual and request-triggered refreshes.
 - Proxy mode must remain running during API access and playback.
 - Provider behavior still determines channel availability, codecs, stream quality, and account limits.
 - Every proxied upstream request creates an isolated browser context, while the browser process itself is reused.

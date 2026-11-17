@@ -7,40 +7,57 @@ using Spectre.Console;
 
 namespace DotNetLab.M3UProxyApp;
 
-internal static class DownloadMode
+public static class DownloadMode
 {
-    public static async Task<int> RunAsync(IConfiguration configuration, CancellationToken cancellationToken, ILoggerFactory loggerFactory)
+    public static async Task<int> RunAsync(IConfiguration configuration, CancellationToken cancellationToken, ILoggerFactory loggerFactory, bool interactive = true)
     {
         var jobs = configuration.GetSection("Downloads").Get<List<DownloadJob>>() ?? [];
         var browserOptions = configuration.GetSection("Browser").Get<BrowserOptions>() ?? new BrowserOptions();
 
-        return await RunAsync(jobs, cancellationToken, loggerFactory, browserOptions);
+        return await RunAsync(jobs, cancellationToken, loggerFactory, browserOptions, interactive);
     }
 
-    public static async Task<int> RunAsync(IReadOnlyCollection<DownloadJob> jobs, CancellationToken cancellationToken, ILoggerFactory? loggerFactory = null, BrowserOptions? browserOptions = null)
+    public static async Task<int> RunAsync(IReadOnlyCollection<DownloadJob> jobs, CancellationToken cancellationToken, ILoggerFactory? loggerFactory = null, BrowserOptions? browserOptions = null, bool interactive = true)
     {
         var logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger("DotNetLab.M3UProxyApp.Download");
         Validate(jobs);
         logger.LogInformation("Download refresh starting jobs={JobCount}", jobs.Count);
-        AnsiConsole.MarkupLine($"Starting [cyan]{jobs.Count}[/] parallel download(s). Press [grey]Ctrl+C[/] to cancel.\n");
+        DownloadFileLogger.LogStatus(jobs, logger, DateTime.UtcNow);
+
+        if (interactive)
+        {
+            AnsiConsole.MarkupLine($"Starting [cyan]{jobs.Count}[/] parallel download(s). Press [grey]Ctrl+C[/] to cancel.\n");
+        }
+
         var totalStopwatch = Stopwatch.StartNew();
-        var results = await RunDownloadsAsync(jobs, cancellationToken, logger, browserOptions);
+        var results = await RunDownloadsAsync(jobs, cancellationToken, logger, browserOptions, interactive);
         totalStopwatch.Stop();
         var succeeded = results.Count(result => result.Success);
         var failed = results.Length - succeeded;
-        WriteResults(results, totalStopwatch.Elapsed, succeeded, failed);
+
+        if (interactive)
+        {
+            WriteResults(results, totalStopwatch.Elapsed, succeeded, failed);
+        }
+
         logger.LogInformation("Download refresh completed succeeded={Succeeded} failed={Failed} duration_ms={ElapsedMilliseconds}", succeeded, failed, totalStopwatch.ElapsedMilliseconds);
+        DownloadFileLogger.LogStatus(jobs, logger, DateTime.UtcNow);
 
         return failed is 0 ? 0 : 1;
     }
 
-    private static async Task<DownloadResult[]> RunDownloadsAsync(IEnumerable<DownloadJob> jobs, CancellationToken cancellationToken, ILogger logger, BrowserOptions? browserOptions)
+    private static async Task<DownloadResult[]> RunDownloadsAsync(IEnumerable<DownloadJob> jobs, CancellationToken cancellationToken, ILogger logger, BrowserOptions? browserOptions, bool interactive)
     {
+        if (interactive is false)
+        {
+            return await Task.WhenAll(jobs.Select(job => RunDownloadAsync(job, cancellationToken, logger, browserOptions)));
+        }
+
         var results = Array.Empty<DownloadResult>();
         var progress = AnsiConsole.Progress().AutoClear(false).HideCompleted(false).Columns(new SpinnerColumn(), new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new DownloadedColumn(), new TransferSpeedColumn(), new RemainingTimeColumn());
         await progress.StartAsync(async context =>
         {
-            var tasks = jobs.Select(job => RunDownloadAsync(job, CreateProgressTask(context, job), cancellationToken, logger, browserOptions));
+            var tasks = jobs.Select(job => RunDownloadWithProgressAsync(job, CreateProgressTask(context, job), cancellationToken, logger, browserOptions));
             results = await Task.WhenAll(tasks);
         });
 
@@ -69,11 +86,11 @@ internal static class DownloadMode
         AnsiConsole.MarkupLine($"\nCompleted in [cyan]{Markup.Escape(FormatDuration(totalDuration))}[/]. [green]{succeeded} succeeded[/], [red]{failed} failed[/].");
     }
 
-    private static void Validate(IReadOnlyCollection<DownloadJob> jobs)
+    public static void Validate(IReadOnlyCollection<DownloadJob> jobs)
     {
         if (jobs.Count is 0)
         {
-            throw new InvalidOperationException("No downloads are configured in appsettings.json.");
+            throw new InvalidOperationException("No downloads are configured.");
         }
 
         if (jobs.Any(job => string.IsNullOrWhiteSpace(job.Name) || string.IsNullOrWhiteSpace(job.Url) || string.IsNullOrWhiteSpace(job.FilePath)))
@@ -89,9 +106,8 @@ internal static class DownloadMode
         }
     }
 
-    private static async Task<DownloadResult> RunDownloadAsync(DownloadJob job, ProgressTask progressTask, CancellationToken cancellationToken, ILogger logger, BrowserOptions? browserOptions)
+    private static async Task<DownloadResult> RunDownloadWithProgressAsync(DownloadJob job, ProgressTask progressTask, CancellationToken cancellationToken, ILogger logger, BrowserOptions? browserOptions)
     {
-        var stopwatch = Stopwatch.StartNew();
         var progress = new InlineProgress<DownloadProgress>(value =>
         {
             if (value.TotalBytes is > 0)
@@ -102,6 +118,26 @@ internal static class DownloadMode
 
             progressTask.Value = value.BytesReceived;
         });
+        var result = await RunDownloadAsync(job, cancellationToken, logger, browserOptions, progress);
+
+        if (result.Success)
+        {
+            progressTask.MaxValue = Math.Max(result.Bytes!.Value, 1);
+            progressTask.IsIndeterminate = false;
+            progressTask.Value = progressTask.MaxValue;
+        }
+        else
+        {
+            progressTask.Description = $"{Markup.Escape(job.Name)} [red](failed)[/]";
+            progressTask.StopTask();
+        }
+
+        return result;
+    }
+
+    private static async Task<DownloadResult> RunDownloadAsync(DownloadJob job, CancellationToken cancellationToken, ILogger logger, BrowserOptions? browserOptions, IProgress<DownloadProgress>? progress = null)
+    {
+        var stopwatch = Stopwatch.StartNew();
 
         try
         {
@@ -109,9 +145,6 @@ internal static class DownloadMode
             await downloader.DownloadAsync(job.Url, job.FilePath, cancellationToken, progress);
             stopwatch.Stop();
             var bytes = new FileInfo(job.FilePath).Length;
-            progressTask.MaxValue = Math.Max(bytes, 1);
-            progressTask.IsIndeterminate = false;
-            progressTask.Value = progressTask.MaxValue;
             logger.LogInformation("Download completed job={Job} bytes={Bytes} duration_ms={ElapsedMilliseconds}", job.Name, bytes, stopwatch.ElapsedMilliseconds);
 
             return new DownloadResult(job, true, bytes, stopwatch.Elapsed, null);
@@ -125,8 +158,6 @@ internal static class DownloadMode
         {
             logger.LogError(exception, "Download failed job={Job}", job.Name);
             stopwatch.Stop();
-            progressTask.Description = $"{Markup.Escape(job.Name)} [red](failed)[/]";
-            progressTask.StopTask();
 
             return new DownloadResult(job, false, null, stopwatch.Elapsed, $"{exception.GetType().Name}; see logs for details");
         }

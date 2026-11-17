@@ -8,7 +8,7 @@ public static class ProxySourceFactory
     {
         if (options.Sources.Count is 0)
         {
-            throw new InvalidOperationException("No proxy sources are configured in appsettings.json.");
+            throw new InvalidOperationException("No proxy sources are configured.");
         }
 
         var downloadsByName = downloads.ToDictionary(download => download.Name, StringComparer.OrdinalIgnoreCase);

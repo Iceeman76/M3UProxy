@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 
@@ -18,11 +19,12 @@ public static class ProxyRequestLogger
     {
         var source = ProxySourceResolver.Resolve(context.Request, sources);
         var description = ProxyRequestDescriptor.Describe(context.Request);
+        var client = GetClientDetails(context);
         var requiresUpstream = source is not null && ProxyRequestDescriptor.RequiresUpstream(context.Request, serveDownloadedFiles);
         var stopwatch = Stopwatch.StartNew();
 
         var failed = false;
-        logger.LogDebug("--> {Destination} {Method} {Description} source={Source}", GetDestination(requiresUpstream), context.Request.Method, description, source?.Name ?? "unknown");
+        logger.LogDebug("--> {Destination} {Method} {Description} source={Source} client_ip={ClientIp} user_agent={UserAgent}", GetDestination(requiresUpstream), context.Request.Method, description, source?.Name ?? "unknown", client.IpAddress, client.UserAgent);
 
         try
         {
@@ -40,11 +42,11 @@ public static class ProxyRequestLogger
         finally
         {
             stopwatch.Stop();
-            WriteCompletion(context, description, source, requiresUpstream, stopwatch.ElapsedMilliseconds, failed, logger);
+            WriteCompletion(context, description, source, client, requiresUpstream, stopwatch.ElapsedMilliseconds, failed, logger);
         }
     }
 
-    private static void WriteCompletion(HttpContext context, string description, ProxySource? source, bool requiresUpstream, long elapsedMilliseconds, bool failed, ILogger logger)
+    private static void WriteCompletion(HttpContext context, string description, ProxySource? source, ClientDetails client, bool requiresUpstream, long elapsedMilliseconds, bool failed, ILogger logger)
     {
         var fileDetails = GetFileDetails(context);
         var level = failed ? LogLevel.Error : context.Response.StatusCode switch
@@ -55,7 +57,21 @@ public static class ProxyRequestLogger
             _ => LogLevel.Information
         };
         var outcome = failed ? "failed" : context.RequestAborted.IsCancellationRequested ? "aborted" : "completed";
-        logger.Log(level, "<-- {Destination} {Method} {Description} source={Source}{FileDetails} status={StatusCode} outcome={Outcome} duration_ms={ElapsedMilliseconds}", GetDestination(requiresUpstream), context.Request.Method, description, source?.Name ?? "unknown", fileDetails, context.Response.StatusCode, outcome, elapsedMilliseconds);
+        logger.Log(level, "<-- {Destination} {Method} {Description} source={Source} client_ip={ClientIp} user_agent={UserAgent}{FileDetails} status={StatusCode} outcome={Outcome} duration_ms={ElapsedMilliseconds}", GetDestination(requiresUpstream), context.Request.Method, description, source?.Name ?? "unknown", client.IpAddress, client.UserAgent, fileDetails, context.Response.StatusCode, outcome, elapsedMilliseconds);
+    }
+
+    private static ClientDetails GetClientDetails(HttpContext context)
+    {
+        var address = context.Connection.RemoteIpAddress;
+        var clientIp = address?.IsIPv4MappedToIPv6 is true ? address.MapToIPv4().ToString() : address?.ToString() ?? "unknown";
+        var userAgent = context.Request.Headers.UserAgent.FirstOrDefault() ?? "unknown";
+
+        if (userAgent.Length > 512)
+        {
+            userAgent = userAgent[..512] + "...";
+        }
+
+        return new ClientDetails(clientIp, JsonSerializer.Serialize(userAgent));
     }
 
     private static string GetFileDetails(HttpContext context)
@@ -95,4 +111,6 @@ public static class ProxyRequestLogger
     private static string GetDestination(bool requiresUpstream) => requiresUpstream ? "UPSTREAM" : "LOCAL";
 
     private sealed record FileSource(string Source, TimeSpan? Age);
+
+    private sealed record ClientDetails(string IpAddress, string UserAgent);
 }

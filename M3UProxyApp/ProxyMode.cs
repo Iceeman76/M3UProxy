@@ -12,31 +12,77 @@ namespace DotNetLab.M3UProxyApp;
 
 public static class ProxyMode
 {
-    public static async Task<int> RunAsync(IConfiguration configuration, CancellationToken cancellationToken, ILoggerFactory loggerFactory)
+    public static async Task<int> RunAsync(IConfiguration configuration, CancellationToken cancellationToken, ILoggerFactory loggerFactory, bool interactive = true, bool service = false)
     {
+        interactive = interactive && service is false;
         var downloads = configuration.GetSection("Downloads").Get<List<DownloadJob>>() ?? [];
         var options = configuration.GetSection("Proxy").Get<ProxyOptions>() ?? new ProxyOptions();
         var browserOptions = configuration.GetSection("Browser").Get<BrowserOptions>() ?? new BrowserOptions();
         var sources = ProxySourceFactory.Create(options, downloads);
+        var logger = loggerFactory.CreateLogger("DotNetLab.M3UProxyApp.Proxy");
         var publicBaseUri = ProxySourceFactory.ValidateBaseUri(options.PublicBaseUrl, "Proxy:PublicBaseUrl");
         ProxySourceFactory.ValidateBaseUri(options.ListenUrl, "Proxy:ListenUrl");
-        var builder = WebApplication.CreateSlimBuilder();
+        var serviceOptions = configuration.GetSection("Service").Get<ServiceOptions>() ?? new ServiceOptions();
+
+        if (service)
+        {
+            serviceOptions.Validate(ApplicationMode.Proxy);
+            DownloadMode.Validate(downloads);
+        }
+
+        var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { ContentRootPath = AppContext.BaseDirectory });
         builder.Configuration.Sources.Clear();
         builder.Configuration.AddConfiguration(configuration);
-        builder.Logging.ClearProviders();
-        builder.Services.AddSingleton(loggerFactory);
+
+        if (service)
+        {
+            ServiceHosting.Configure(builder.Services, loggerFactory);
+        }
+        else
+        {
+            builder.Logging.ClearProviders();
+            builder.Services.AddSingleton(loggerFactory);
+        }
+
         builder.WebHost.UseUrls(options.ListenUrl);
-        await using var application = builder.Build();
         await using var chromeClient = new ChromeContentClient(browserOptions, loggerFactory.CreateLogger<ChromeContentClient>());
-        var downloadRefresh = new DownloadRefreshCoordinator(downloads, TimeSpan.FromMinutes(options.DownloadMaxAgeMinutes), loggerFactory, browserOptions);
+        var downloadRefresh = new DownloadRefreshCoordinator(downloads, TimeSpan.FromMinutes(options.DownloadMaxAgeMinutes), loggerFactory, browserOptions, interactive);
+
+        if (service)
+        {
+            builder.Services.AddHostedService(_ => new ScheduledDownloadRefresh(downloadRefresh.UpdateAsync, serviceOptions, loggerFactory.CreateLogger<ScheduledDownloadRefresh>()));
+        }
+
+        await using var application = builder.Build();
         var requestHandler = new ProxyRequestHandler(sources, publicBaseUri, options.ServeDownloadedFiles, chromeClient, downloadRefresh, loggerFactory.CreateLogger("DotNetLab.M3UProxyApp.Proxy"));
         var requestLogger = application.Services.GetRequiredService<ILoggerFactory>().CreateLogger("DotNetLab.M3UProxyApp.ProxyRequestLogger");
+        application.Use(async (context, next) =>
+        {
+            using var stopping = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, application.Lifetime.ApplicationStopping);
+            context.RequestAborted = stopping.Token;
+            await next(context);
+        });
         application.Use((context, next) => ProxyRequestLogger.LogAsync(context, next, sources, options.ServeDownloadedFiles, requestLogger));
         application.MapMethods("/{**path}", [HttpMethods.Get, HttpMethods.Head], requestHandler.HandleAsync);
-        WriteStartupInformation(options, sources, publicBaseUri);
+        logger.LogInformation("Proxy configured listen_url={ListenUrl} public_base_url={PublicBaseUrl}", options.ListenUrl, options.PublicBaseUrl);
+        DownloadFileLogger.LogStatus(downloads, logger, DateTime.UtcNow);
+
+        if (interactive)
+        {
+            WriteStartupInformation(options, sources, publicBaseUri);
+        }
+
         await application.StartAsync(cancellationToken);
-        loggerFactory.CreateLogger("DotNetLab.M3UProxyApp.Proxy").LogInformation("Proxy started with {SourceCount} sources", sources.Count);
-        await WaitForExitAsync(application, downloadRefresh, cancellationToken);
+        logger.LogInformation("Proxy started with {SourceCount} sources service={Service}", sources.Count, service);
+
+        if (interactive)
+        {
+            await WaitForExitAsync(application, downloadRefresh, cancellationToken);
+        }
+        else
+        {
+            await application.WaitForShutdownAsync(cancellationToken);
+        }
 
         return 0;
     }

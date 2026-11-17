@@ -1,3 +1,5 @@
+using System.Net;
+using System.Text.Json;
 using DotNetLab.M3UProxyApp;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
@@ -78,6 +80,73 @@ public sealed class ProxyRequestLoggerTests
         await Assert.ThrowsAsync<OperationCanceledException>(() => ProxyRequestLogger.LogAsync(context, _ => throw new OperationCanceledException(cancellation.Token), [ProxyTestFactory.CreateSource()], true, factory.CreateLogger("Requests")));
         Assert.That(provider.Entries.Last().Level, Is.EqualTo(LogLevel.Debug));
         Assert.That(provider.Entries.Last().Message, Does.Contain("outcome=aborted"));
+    }
+
+    [TestCase("192.168.1.20", "192.168.1.20")]
+    [TestCase("::ffff:192.168.1.20", "192.168.1.20")]
+    [TestCase("2001:db8::20", "2001:db8::20")]
+    public async Task LogAsync_IdentifiesCallerInStartAndCompletion(string address, string expectedAddress)
+    {
+        var provider = new RecordingLoggerProvider();
+        using var factory = LoggerFactory.Create(logging => logging.SetMinimumLevel(LogLevel.Debug).AddProvider(provider));
+        var context = CreateContext();
+        context.Connection.RemoteIpAddress = IPAddress.Parse(address);
+        context.Request.Headers.UserAgent = "VLC/3.0.21 LibVLC/3.0.21";
+        context.Request.Headers["X-Forwarded-For"] = "203.0.113.99";
+
+        await ProxyRequestLogger.LogAsync(context, _ => Task.CompletedTask, [ProxyTestFactory.CreateSource()], true, factory.CreateLogger("Requests"));
+
+        Assert.That(provider.Entries, Has.Count.EqualTo(2));
+
+        foreach (var entry in provider.Entries)
+        {
+            Assert.That(entry.Message, Does.Contain($"client_ip={expectedAddress}"));
+            Assert.That(entry.Message, Does.Contain("user_agent=\"VLC/3.0.21 LibVLC/3.0.21\""));
+            Assert.That(entry.Message, Does.Not.Contain("203.0.113.99"));
+        }
+    }
+
+    [Test]
+    public async Task LogAsync_UsesUnknownForMissingClientDetails()
+    {
+        var provider = new RecordingLoggerProvider();
+        using var factory = LoggerFactory.Create(logging => logging.AddProvider(provider));
+        await ProxyRequestLogger.LogAsync(CreateContext(), _ => Task.CompletedTask, [], true, factory.CreateLogger("Requests"));
+        Assert.That(provider.Entries.Single().Message, Does.Contain("client_ip=unknown user_agent=\"unknown\""));
+    }
+
+    [Test]
+    public async Task LogAsync_PreservesOriginalCallerWhenDownstreamChangesContext()
+    {
+        var provider = new RecordingLoggerProvider();
+        using var factory = LoggerFactory.Create(logging => logging.SetMinimumLevel(LogLevel.Debug).AddProvider(provider));
+        var context = CreateContext();
+        context.Connection.RemoteIpAddress = IPAddress.Parse("192.168.1.20");
+        context.Request.Headers.UserAgent = "Original player";
+
+        await ProxyRequestLogger.LogAsync(context, request =>
+        {
+            request.Connection.RemoteIpAddress = IPAddress.Loopback;
+            request.Request.Headers.UserAgent = "Modified player";
+
+            return Task.CompletedTask;
+        }, [], true, factory.CreateLogger("Requests"));
+
+        Assert.That(provider.Entries.All(entry => entry.Message.Contains("client_ip=192.168.1.20 user_agent=\"Original player\"", StringComparison.Ordinal)), Is.True);
+    }
+
+    [Test]
+    public async Task LogAsync_QuotesBoundsAndEscapesUserAgent()
+    {
+        var provider = new RecordingLoggerProvider();
+        using var factory = LoggerFactory.Create(logging => logging.AddProvider(provider));
+        var context = CreateContext();
+        var userAgent = "Player\"\r\n\u001b[31m " + new string('a', 1000);
+        context.Request.Headers.UserAgent = userAgent;
+        await ProxyRequestLogger.LogAsync(context, _ => Task.CompletedTask, [], true, factory.CreateLogger("Requests"));
+        var entry = provider.Entries.Single().Message;
+        Assert.That(entry, Does.Contain("user_agent=" + JsonSerializer.Serialize(userAgent[..512] + "...")));
+        Assert.That(entry.Any(char.IsControl), Is.False);
     }
 
     [TestCase(0, 0, 0, 42, "42s")]

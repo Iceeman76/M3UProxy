@@ -1,0 +1,23 @@
+[Unit]
+Description=M3U Proxy
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=notify
+User=m3uproxy
+Group=m3uproxy
+ExecStart=/opt/m3uproxy/M3UProxyApp --service --proxy --config /etc/m3uproxy/appsettings.json
+WorkingDirectory=/var/lib/m3uproxy
+StateDirectory=m3uproxy
+LogsDirectory=m3uproxy
+RuntimeDirectory=m3uproxy
+Environment=TMPDIR=/run/m3uproxy
+UMask=0077
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

@@ -27,6 +27,7 @@ internal sealed class ProxyRequestHandler(IReadOnlyList<ProxySource> sources, Ur
         }
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
         {
+            context.Abort();
         }
         catch (Exception exception)
         {

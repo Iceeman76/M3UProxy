@@ -20,6 +20,8 @@ public sealed class BrowserIntegrationTests
     private WebApplication application = null!;
     private ChromeContentClient client = null!;
     private string baseUrl = string.Empty;
+    private int playlistRequests;
+    private readonly TaskCompletionSource streamStopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     [OneTimeSetUp]
     public async Task StartAsync()
@@ -81,7 +83,12 @@ public sealed class BrowserIntegrationTests
             context.Response.StatusCode = 503;
             await context.Response.WriteAsync("Temporarily unavailable");
         });
-        application.MapGet("/get.php", context => context.Response.WriteAsync("#EXTM3U\n#EXTINF:-1,Example\n" + baseUrl + "/movie/user/password/1.ts\n"));
+        application.MapGet("/get.php", context =>
+        {
+            Interlocked.Increment(ref playlistRequests);
+
+            return context.Response.WriteAsync("#EXTM3U\n#EXTINF:-1,Example\n" + baseUrl + "/movie/user/password/1.ts\n");
+        });
         application.MapGet("/xmltv.php", context => context.Response.WriteAsync("<tv></tv>"));
         application.MapGet("/movie/user/password/1.ts", async context =>
         {
@@ -100,6 +107,20 @@ public sealed class BrowserIntegrationTests
 
             context.Response.ContentLength = BinaryContent.Length;
             await context.Response.Body.WriteAsync(BinaryContent, context.RequestAborted);
+        });
+        application.MapGet("/movie/user/password/slow.ts", async context =>
+        {
+            try
+            {
+                context.Response.ContentType = "video/mp2t";
+                await context.Response.Body.WriteAsync(BinaryContent.AsMemory(0, 65536), context.RequestAborted);
+                await context.Response.Body.FlushAsync(context.RequestAborted);
+                await Task.Delay(Timeout.InfiniteTimeSpan, context.RequestAborted);
+            }
+            finally
+            {
+                streamStopped.TrySetResult();
+            }
         });
         await application.StartAsync();
         baseUrl = application.Urls.Single();
@@ -340,6 +361,96 @@ public sealed class BrowserIntegrationTests
             {
                 Directory.Delete(directory, true);
             }
+        }
+    }
+
+    [TestCase(ApplicationMode.Proxy)]
+    [TestCase(ApplicationMode.Download)]
+    public async Task ServiceMode_RefreshesOnScheduleWithoutInteractiveOutputAndStopsCleanly(ApplicationMode mode)
+    {
+        using var portReservation = new TcpListener(IPAddress.Loopback, 0);
+        portReservation.Start();
+        var port = ((IPEndPoint)portReservation.LocalEndpoint).Port;
+        portReservation.Stop();
+        var proxyUrl = $"http://127.0.0.1:{port}";
+        var directory = Path.Combine(Path.GetTempPath(), $"m3uproxy-service-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var settings = new Dictionary<string, string?>
+        {
+            ["Browser:Channel"] = "custom",
+            ["Browser:ExecutablePath"] = FindChromeExecutablePath(),
+            ["Service:RefreshIntervalMinutes"] = "0.004",
+            ["Downloads:0:Name"] = "Playlist",
+            ["Downloads:0:Url"] = baseUrl + "/get.php?username=user&password=password",
+            ["Downloads:0:FilePath"] = Path.Combine(directory, "playlist.m3u"),
+            ["Downloads:1:Name"] = "EPG",
+            ["Downloads:1:Url"] = baseUrl + "/xmltv.php?username=user&password=password",
+            ["Downloads:1:FilePath"] = Path.Combine(directory, "epg.xmltv"),
+            ["Proxy:ListenUrl"] = proxyUrl,
+            ["Proxy:PublicBaseUrl"] = proxyUrl,
+            ["Proxy:Sources:0:Name"] = "Local provider",
+            ["Proxy:Sources:0:PlaylistDownload"] = "Playlist",
+            ["Proxy:Sources:0:EpgDownload"] = "EPG"
+        };
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+        var originalConsole = Spectre.Console.AnsiConsole.Console;
+        var originalOutput = Console.Out;
+        using var output = new StringWriter();
+        Spectre.Console.AnsiConsole.Console = Spectre.Console.AnsiConsole.Create(new Spectre.Console.AnsiConsoleSettings { Out = new Spectre.Console.AnsiConsoleOutput(output) });
+        Console.SetOut(output);
+
+        try
+        {
+            var initialRequests = Volatile.Read(ref playlistRequests);
+            using var logging = LoggerFactory.Create(builder => builder.ClearProviders());
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            var serviceTask = mode is ApplicationMode.Proxy ? ProxyMode.RunAsync(configuration, cancellation.Token, logging, service: true) : DownloadServiceMode.RunAsync(configuration, cancellation.Token, logging);
+            HttpResponseMessage? streamResponse = null;
+
+            try
+            {
+                while (Volatile.Read(ref playlistRequests) < initialRequests + 2)
+                {
+                    await Task.Delay(20, cancellation.Token);
+                }
+
+                Assert.That(await File.ReadAllTextAsync(Path.Combine(directory, "epg.xmltv"), cancellation.Token), Is.EqualTo("<tv></tv>"));
+
+                if (mode is ApplicationMode.Proxy)
+                {
+                    using var httpClient = new HttpClient();
+                    streamResponse = await httpClient.GetAsync(proxyUrl + "/movie/user/password/slow.ts", HttpCompletionOption.ResponseHeadersRead, cancellation.Token);
+                    var body = await streamResponse.Content.ReadAsStreamAsync(cancellation.Token);
+                    var firstByte = new byte[1];
+                    Assert.That(await body.ReadAsync(firstByte, cancellation.Token), Is.EqualTo(1));
+                    await cancellation.CancelAsync();
+                    await serviceTask.WaitAsync(TimeSpan.FromSeconds(10));
+                    await streamStopped.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                }
+            }
+            finally
+            {
+                await cancellation.CancelAsync();
+
+                try
+                {
+                    await serviceTask.WaitAsync(TimeSpan.FromSeconds(10));
+                }
+                catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+                {
+                }
+
+                streamResponse?.Dispose();
+            }
+
+            Assert.That(output.ToString(), Is.Empty);
+            Assert.That(Directory.GetFiles(directory, "*.download"), Is.Empty);
+        }
+        finally
+        {
+            Console.SetOut(originalOutput);
+            Spectre.Console.AnsiConsole.Console = originalConsole;
+            Directory.Delete(directory, true);
         }
     }
 

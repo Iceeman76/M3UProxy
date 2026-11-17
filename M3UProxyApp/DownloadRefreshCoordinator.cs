@@ -3,7 +3,7 @@ using Microsoft.Extensions.Logging;
 
 namespace DotNetLab.M3UProxyApp;
 
-public sealed class DownloadRefreshCoordinator(IReadOnlyCollection<DownloadJob> jobs, TimeSpan maxAge, ILoggerFactory? loggerFactory = null, BrowserOptions? browserOptions = null)
+public sealed class DownloadRefreshCoordinator(IReadOnlyCollection<DownloadJob> jobs, TimeSpan maxAge, ILoggerFactory? loggerFactory = null, BrowserOptions? browserOptions = null, bool interactive = true)
 {
     private readonly SemaphoreSlim updateLock = new(1, 1);
 
@@ -13,7 +13,7 @@ public sealed class DownloadRefreshCoordinator(IReadOnlyCollection<DownloadJob> 
 
         try
         {
-            await DownloadMode.RunAsync(jobs, cancellationToken, loggerFactory, browserOptions);
+            await DownloadMode.RunAsync(jobs, cancellationToken, loggerFactory, browserOptions, interactive);
         }
         finally
         {
@@ -34,7 +34,7 @@ public sealed class DownloadRefreshCoordinator(IReadOnlyCollection<DownloadJob> 
         {
             if (NeedsUpdate(DateTime.UtcNow))
             {
-                await DownloadMode.RunAsync(jobs, cancellationToken, loggerFactory, browserOptions);
+                await DownloadMode.RunAsync(jobs, cancellationToken, loggerFactory, browserOptions, interactive);
 
                 return true;
             }

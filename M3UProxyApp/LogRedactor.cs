@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Configuration;
@@ -10,7 +11,7 @@ public sealed class LogRedactor(IConfiguration configuration)
 
     public string Redact(string message)
     {
-        var sanitized = Regex.Replace(message, @"https?://[^\s<>""']+", "[redacted URL]", RegexOptions.IgnoreCase);
+        var sanitized = Regex.Replace(message, @"https?://[^\s<>""']+", match => IsSafeOrigin(match.Value) ? match.Value : "[redacted URL]", RegexOptions.IgnoreCase);
         sanitized = Regex.Replace(sanitized, @"(?i)\b(authorization|cookie|set-cookie)\s*:\s*[^\r\n]+", "$1: [redacted]");
         sanitized = Regex.Replace(sanitized, @"(?i)(/(?:live|movie|series|timeshift)/)[^/\s]+/[^/\s]+", "$1[redacted]/[redacted]");
         sanitized = Regex.Replace(sanitized, @"(?i)([?&][^=\s&]+)=([^&\s""'<>]+)", "$1=[redacted]");
@@ -24,6 +25,13 @@ public sealed class LogRedactor(IConfiguration configuration)
         }
 
         return sanitized.Replace("\r", "\\r").Replace("\n", "\\n");
+    }
+
+    private static bool IsSafeOrigin(string value)
+    {
+        var pathStart = value.IndexOfAny(['/', '\\'], value.IndexOf("://", StringComparison.Ordinal) + 3);
+
+        return (pathStart < 0 || pathStart == value.Length - 1) && Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.AbsolutePath is "/" && uri.UserInfo.Length is 0 && uri.Query.Length is 0 && uri.Fragment.Length is 0;
     }
 
     private static string[] GetSecrets(IConfiguration configuration)
@@ -49,6 +57,6 @@ public sealed class LogRedactor(IConfiguration configuration)
             }
         }
 
-        return values.Where(value => string.IsNullOrEmpty(value) is false).SelectMany(value => new[] { value, Uri.EscapeDataString(value), System.Net.WebUtility.UrlEncode(value) }).Distinct(StringComparer.Ordinal).OrderByDescending(value => value.Length).ToArray();
+        return values.Where(value => string.IsNullOrEmpty(value) is false).SelectMany(value => new[] { value, Uri.EscapeDataString(value), System.Net.WebUtility.UrlEncode(value), JsonSerializer.Serialize(value)[1..^1] }).Distinct(StringComparer.Ordinal).OrderByDescending(value => value.Length).ToArray();
     }
 }
