@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using Microsoft.AspNetCore.Http;
-using Spectre.Console;
+using Microsoft.Extensions.Logging;
 
 namespace DotNetLab.M3UProxyApp;
 
@@ -14,37 +14,48 @@ internal static class ProxyRequestLogger
         context.Items[FileSourceKey] = new FileSource(refreshed ? "SERVER_REFRESH" : "CACHE", age);
     }
 
-    public static async Task LogAsync(HttpContext context, RequestDelegate next, IReadOnlyList<ProxySource> sources, bool serveDownloadedFiles)
+    public static async Task LogAsync(HttpContext context, RequestDelegate next, IReadOnlyList<ProxySource> sources, bool serveDownloadedFiles, ILogger logger)
     {
         var source = ProxySourceResolver.Resolve(context.Request, sources);
         var description = ProxyRequestDescriptor.Describe(context.Request);
         var requiresUpstream = source is not null && ProxyRequestDescriptor.RequiresUpstream(context.Request, serveDownloadedFiles);
         var stopwatch = Stopwatch.StartNew();
 
-        WriteStart(context.Request, description, source, requiresUpstream);
+        var failed = false;
+        logger.LogDebug("--> {Destination} {Method} {Description} source={Source}", GetDestination(requiresUpstream), context.Request.Method, description, source?.Name ?? "unknown");
 
         try
         {
             await next(context);
         }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            failed = true;
+            throw;
+        }
         finally
         {
             stopwatch.Stop();
-            WriteCompletion(context, description, source, requiresUpstream, stopwatch.ElapsedMilliseconds);
+            WriteCompletion(context, description, source, requiresUpstream, stopwatch.ElapsedMilliseconds, failed, logger);
         }
     }
 
-    private static void WriteStart(HttpRequest request, string description, ProxySource? source, bool requiresUpstream)
-    {
-        var message = $"[{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss}] --> {GetDestination(requiresUpstream)} {request.Method} {description} source={source?.Name ?? "unknown"}";
-        WriteColored(message, requiresUpstream);
-    }
-
-    private static void WriteCompletion(HttpContext context, string description, ProxySource? source, bool requiresUpstream, long elapsedMilliseconds)
+    private static void WriteCompletion(HttpContext context, string description, ProxySource? source, bool requiresUpstream, long elapsedMilliseconds, bool failed, ILogger logger)
     {
         var fileDetails = GetFileDetails(context);
-        var message = $"[{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss}] <-- {GetDestination(requiresUpstream)} {context.Request.Method} {description} source={source?.Name ?? "unknown"}{fileDetails} status={context.Response.StatusCode} duration_ms={elapsedMilliseconds}";
-        WriteColored(message, requiresUpstream);
+        var level = failed ? LogLevel.Error : context.Response.StatusCode switch
+        {
+            >= 500 => LogLevel.Error,
+            >= 400 => LogLevel.Warning,
+            _ when context.RequestAborted.IsCancellationRequested => LogLevel.Debug,
+            _ => LogLevel.Information
+        };
+        var outcome = failed ? "failed" : context.RequestAborted.IsCancellationRequested ? "aborted" : "completed";
+        logger.Log(level, "<-- {Destination} {Method} {Description} source={Source}{FileDetails} status={StatusCode} outcome={Outcome} duration_ms={ElapsedMilliseconds}", GetDestination(requiresUpstream), context.Request.Method, description, source?.Name ?? "unknown", fileDetails, context.Response.StatusCode, outcome, elapsedMilliseconds);
     }
 
     private static string GetFileDetails(HttpContext context)
@@ -79,12 +90,6 @@ internal static class ProxyRequestLogger
         }
 
         return $"{(int)normalizedAge.TotalSeconds}s";
-    }
-
-    private static void WriteColored(string message, bool requiresUpstream)
-    {
-        var escapedMessage = Markup.Escape(message);
-        AnsiConsole.MarkupLine(requiresUpstream ? $"[orange1]{escapedMessage}[/]" : $"[cyan]{escapedMessage}[/]");
     }
 
     private static string GetDestination(bool requiresUpstream) => requiresUpstream ? "UPSTREAM" : "LOCAL";

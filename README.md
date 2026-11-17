@@ -266,21 +266,44 @@ The proxy does not attempt to bypass provider rate limits. A `429` response shou
 
 ## Request logging
 
-Proxy mode writes a start and completion entry for every request. Logs include the request destination, request type, configured source name, result status, and duration. Raw URLs, usernames, and passwords are not printed.
+Proxy mode uses `Microsoft.Extensions.Logging.ILogger` with the console provider. Configure the minimum level in `appsettings.json`:
 
-- Cyan `LOCAL` entries are handled by the proxy, such as M3U and XMLTV responses served from downloaded files. Their completion entries include `file_source=CACHE` or `file_source=SERVER_REFRESH` and the resulting `file_age`.
-- Orange `UPSTREAM` entries contact the configured provider, such as Xtream API requests and media streams.
+```json
+"Logging": {
+  "LogLevel": {
+    "Default": "Information",
+    "Microsoft": "None"
+  }
+}
+```
+
+| Level | Console request output |
+| --- | --- |
+| `Trace` or `Debug` | Request starts and all completions. |
+| `Information` | Successful completions, warnings, and errors. This is the default. |
+| `Warning` | HTTP 4xx and 5xx completions and unhandled failures. |
+| `Error` | HTTP 5xx completions and unhandled failures. |
+| `Critical` or `None` | No request entries; the application does not emit critical request logs. |
+
+Client cancellations are logged at `Debug` unless the response already has an error status. Unhandled exceptions are logged as failed requests and rethrown. Exception messages are omitted because they may contain provider credentials.
+
+You can override the request category separately using `Logging:LogLevel:DotNetLab.M3UProxyApp.ProxyRequestLogger`. Keep `Microsoft` at `None` to suppress framework request logs, which can include raw URLs containing credentials. Restart the application after changing settings. Menus, startup information, download progress, and top-level application errors are displayed independently of the log level.
+
+Logs include the request destination, request type, configured source name, result status, outcome, and duration. Raw URLs, usernames, and passwords are not printed by the request logger.
+
+- `LOCAL` entries are handled by the proxy, such as M3U and XMLTV responses served from downloaded files. Their completion entries include `file_source=CACHE` or `file_source=SERVER_REFRESH` and the resulting `file_age`.
+- `UPSTREAM` entries contact the configured provider, such as Xtream API requests and media streams.
 - Requests with unknown credentials are `LOCAL` because they are rejected before an upstream connection is attempted.
 
-Example:
+Example messages with `Debug` enabled (the console also includes the timestamp, level, and category):
 
 ```text
-[2026-08-17 23:30:00] --> UPSTREAM GET Xtream get_vod_categories source=Example
-[2026-08-17 23:30:01] <-- UPSTREAM GET Xtream get_vod_categories source=Example status=200 duration_ms=842
-[2026-08-17 23:31:12] --> LOCAL GET M3U playlist source=Example
-[2026-08-17 23:31:12] <-- LOCAL GET M3U playlist source=Example file_source=CACHE file_age=12m34s status=200 duration_ms=18
-[2026-08-17 23:32:00] <-- LOCAL GET XMLTV EPG source=Example file_source=SERVER_REFRESH file_age=0s status=200 duration_ms=4321
-[2026-08-17 23:33:13] --> UPSTREAM GET movie stream source=Example
+--> UPSTREAM GET Xtream get_vod_categories source=Example
+<-- UPSTREAM GET Xtream get_vod_categories source=Example status=200 outcome=completed duration_ms=842
+--> LOCAL GET M3U playlist source=Example
+<-- LOCAL GET M3U playlist source=Example file_source=CACHE file_age=12m34s status=200 outcome=completed duration_ms=18
+<-- LOCAL GET XMLTV EPG source=Example file_source=SERVER_REFRESH file_age=0s status=200 outcome=completed duration_ms=4321
+--> UPSTREAM GET movie stream source=Example
 ```
 
 A stream completion entry appears when playback ends or the player closes the connection.

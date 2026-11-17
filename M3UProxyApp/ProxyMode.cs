@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Spectre.Console;
@@ -19,13 +20,21 @@ internal static class ProxyMode
         var publicBaseUri = ProxySourceFactory.ValidateBaseUri(options.PublicBaseUrl, "Proxy:PublicBaseUrl");
         ProxySourceFactory.ValidateBaseUri(options.ListenUrl, "Proxy:ListenUrl");
         var builder = WebApplication.CreateSlimBuilder();
+        builder.Configuration.Sources.Clear();
+        builder.Configuration.AddConfiguration(configuration);
         builder.Logging.ClearProviders();
+        builder.Logging.AddSimpleConsole(console =>
+        {
+            console.SingleLine = true;
+            console.TimestampFormat = "[yyyy-MM-dd HH:mm:ss] ";
+        });
         builder.WebHost.UseUrls(options.ListenUrl);
         await using var application = builder.Build();
         await using var chromeClient = new ChromeContentClient();
         var downloadRefresh = new DownloadRefreshCoordinator(downloads, TimeSpan.FromMinutes(options.DownloadMaxAgeMinutes));
         var requestHandler = new ProxyRequestHandler(sources, publicBaseUri, options.ServeDownloadedFiles, chromeClient, downloadRefresh);
-        application.Use((context, next) => ProxyRequestLogger.LogAsync(context, next, sources, options.ServeDownloadedFiles));
+        var requestLogger = application.Services.GetRequiredService<ILoggerFactory>().CreateLogger("DotNetLab.M3UProxyApp.ProxyRequestLogger");
+        application.Use((context, next) => ProxyRequestLogger.LogAsync(context, next, sources, options.ServeDownloadedFiles, requestLogger));
         application.MapMethods("/{**path}", [HttpMethods.Get, HttpMethods.Head], requestHandler.HandleAsync);
         WriteStartupInformation(options, sources, publicBaseUri);
         await application.StartAsync(cancellationToken);
@@ -68,7 +77,7 @@ internal static class ProxyMode
     private static void WriteStartupInformation(ProxyOptions options, IEnumerable<ProxySource> sources, Uri publicBaseUri)
     {
         AnsiConsole.MarkupLine($"Proxy listening on [cyan]{Markup.Escape(options.ListenUrl)}[/]. Press [yellow]U[/] to update files. Press [yellow]Q[/] or [grey]Ctrl+C[/] to exit the application.\n");
-        AnsiConsole.MarkupLine("Log colors: [cyan]LOCAL[/] stays inside the proxy, [orange1]UPSTREAM[/] contacts the provider.\n");
+        AnsiConsole.MarkupLine("Request destinations: LOCAL stays inside the proxy, UPSTREAM contacts the provider. Configure Logging:LogLevel to filter console logs.\n");
 
         if (options.ServeDownloadedFiles)
         {
